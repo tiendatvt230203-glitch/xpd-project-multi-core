@@ -63,8 +63,9 @@ struct app_config {
     int aes_bits;
 };
 
-int config_load(struct app_config *cfg, const char *filename);
 int parse_mac(const char *str, uint8_t *mac);
+int parse_ip_cidr_pub(const char *str, uint32_t *ip, uint32_t *netmask, uint32_t *network);
+int parse_hex_bytes_pub(const char *str, uint8_t *out, int expected_len);
 int config_find_local_for_ip(struct app_config *cfg, uint32_t dest_ip);
 int config_validate(struct app_config *cfg);
 
