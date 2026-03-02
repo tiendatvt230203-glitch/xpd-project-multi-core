@@ -8,6 +8,7 @@
 #include "packet_crypto.h"
 
 #define FRAG_HDR_SIZE       3
+#define FRAG_L4_HDR_SIZE    4
 #define FRAG_FLAG_BIT       0x80
 #define FRAG_MTU            1500
 #define FRAG_TABLE_SIZE     4096
@@ -23,6 +24,7 @@ struct frag_entry {
     uint8_t  orig_proto;
     uint64_t timestamp_ns;
     int      valid;
+    uint16_t transport_hdr_len;
 };
 
 struct frag_table {
@@ -37,6 +39,13 @@ void frag_table_gc(struct frag_table *ft);
 
 static inline int frag_need_split(uint32_t pkt_len) {
     int overhead = packet_crypto_get_tunnel_hdr_size() + FRAG_HDR_SIZE;
+    if (packet_crypto_get_mode() == 1)
+        overhead += 16;
+    return (pkt_len + overhead) > FRAG_MTU;
+}
+
+static inline int frag_need_split_l4(uint32_t pkt_len) {
+    int overhead = packet_crypto_get_tunnel_hdr_size() + FRAG_L4_HDR_SIZE;
     if (packet_crypto_get_mode() == 1)
         overhead += 16;
     return (pkt_len + overhead) > FRAG_MTU;
@@ -58,5 +67,22 @@ int frag_try_reassemble(struct frag_table *ft,
                         const uint8_t *pkt_data, uint32_t pkt_len,
                         uint16_t pkt_id, uint8_t frag_index,
                         uint8_t *out_buf, uint32_t *out_len);
+
+int frag_split_and_encrypt_l4(struct packet_crypto_ctx *ctx,
+                              const uint8_t *pkt_data, uint32_t pkt_len,
+                              uint8_t *frag1, uint32_t *frag1_len,
+                              uint8_t *frag2, uint32_t *frag2_len);
+
+int frag_is_fragment_l4(const uint8_t *pkt_data, uint32_t pkt_len,
+                        uint16_t *pkt_id, uint8_t *frag_index);
+
+int frag_decrypt_fragment_l4(struct packet_crypto_ctx *ctx,
+                             uint8_t *packet, size_t pkt_len,
+                             uint16_t *out_pkt_id, uint8_t *out_frag_index);
+
+int frag_try_reassemble_l4(struct frag_table *ft,
+                           const uint8_t *pkt_data, uint32_t pkt_len,
+                           uint16_t pkt_id, uint8_t frag_index,
+                           uint8_t *out_buf, uint32_t *out_len);
 
 #endif

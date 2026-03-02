@@ -110,4 +110,7 @@ void crypto_restore_ipv6_header(uint8_t *packet, size_t pkt_len);
 
 uint16_t crypto_calc_ip_checksum(const uint8_t *ip_hdr, int hdr_len);
 
+uint16_t crypto_calc_tcp_checksum(const uint8_t *ip_hdr, int ip_hdr_len,
+                                   const uint8_t *tcp_seg, int tcp_seg_len);
+
 #endif

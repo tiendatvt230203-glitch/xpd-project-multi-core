@@ -3,13 +3,13 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/select.h>
+#include <sched.h>
 #include <bpf/libbpf.h>
 #include <libpq-fe.h>
 #include "config.h"
 #include "db_config.h"
 #include "forwarder.h"
 
-/* PostgreSQL channel name to listen on */
 #define NOTIFY_CHANNEL "xdp_start"
 
 static int libbpf_print_silent(enum libbpf_print_level level,
@@ -19,11 +19,13 @@ static int libbpf_print_silent(enum libbpf_print_level level,
 }
 
 static void print_usage(const char *prog) {
-    printf("Usage: %s --db-url <connection_string>\n", prog);
+    printf("Usage: %s --db-url <connection_string> [--cpu-core <N>]\n", prog);
     printf("\n");
     printf("  --db-url <str>   libpq connection string, e.g.:\n");
     printf("                     \"host=localhost user=postgres password=secret dbname=xdpdb\"\n");
     printf("                     \"postgresql://postgres:secret@localhost/xdpdb\"\n");
+    printf("  --cpu-core <N>   pin entire process to CPU core N (default: 0).\n");
+    printf("                   Use a single core to avoid migration and reduce packet drops.\n");
     printf("\n");
     printf("The daemon listens on PostgreSQL channel: " NOTIFY_CHANNEL "\n");
     printf("To start the forwarder, run this SQL from any client (e.g. VSCode):\n");
@@ -31,11 +33,18 @@ static void print_usage(const char *prog) {
     printf("  Example: SELECT pg_notify('" NOTIFY_CHANNEL "', '1');\n");
 }
 
-/*
- * Wait for a PostgreSQL NOTIFY on the xdp_start channel.
- * Blocks until a notification arrives.
- * Returns the config_id from the notification payload, or -1 on error.
- */
+static int pin_to_cpu_core(int cpu_core) {
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(cpu_core, &cpuset);
+
+    if (sched_setaffinity(0, sizeof(cpuset), &cpuset) != 0) {
+        perror("[DAEMON] sched_setaffinity");
+        return -1;
+    }
+    return 0;
+}
+
 static int wait_for_notify(PGconn *conn) {
     printf("[DAEMON] Waiting for notification on channel '" NOTIFY_CHANNEL "'...\n");
     printf("[DAEMON] Send from PostgreSQL: SELECT pg_notify('" NOTIFY_CHANNEL "', '<config_id>');\n");
@@ -48,7 +57,6 @@ static int wait_for_notify(PGconn *conn) {
     }
 
     while (1) {
-        /* Use select() to wait for data from PostgreSQL */
         fd_set input_mask;
         FD_ZERO(&input_mask);
         FD_SET(pq_fd, &input_mask);
@@ -59,13 +67,11 @@ static int wait_for_notify(PGconn *conn) {
             return -1;
         }
 
-        /* Consume input from server */
         if (PQconsumeInput(conn) == 0) {
             fprintf(stderr, "[DAEMON] PQconsumeInput failed: %s\n", PQerrorMessage(conn));
             return -1;
         }
 
-        /* Check for notifications */
         PGnotify *notify = PQnotifies(conn);
         if (notify) {
             printf("[DAEMON] Received NOTIFY on channel '%s', payload: '%s'\n",
@@ -77,7 +83,6 @@ static int wait_for_notify(PGconn *conn) {
             if (config_id <= 0) {
                 fprintf(stderr, "[DAEMON] Invalid config_id '%s', must be a positive integer\n",
                         notify->extra);
-                /* Continue waiting for next notification */
                 continue;
             }
 
@@ -88,8 +93,8 @@ static int wait_for_notify(PGconn *conn) {
 
 int main(int argc, char **argv) {
     const char *db_url = NULL;
+    int cpu_core = 0;
 
-    /* Parse arguments */
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
             print_usage(argv[0]);
@@ -101,6 +106,17 @@ int main(int argc, char **argv) {
                 return 1;
             }
             db_url = argv[++i];
+        } else if (strcmp(argv[i], "--cpu-core") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Error: --cpu-core requires a value\n");
+                print_usage(argv[0]);
+                return 1;
+            }
+            cpu_core = atoi(argv[++i]);
+            if (cpu_core < 0) {
+                fprintf(stderr, "Error: --cpu-core must be >= 0 (got %d)\n", cpu_core);
+                return 1;
+            }
         } else {
             fprintf(stderr, "Error: Unknown argument: %s\n", argv[i]);
             print_usage(argv[0]);
@@ -114,9 +130,15 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    if (pin_to_cpu_core(cpu_core) != 0) {
+        fprintf(stderr, "Error: Failed to pin to CPU core %d\n", cpu_core);
+        return 1;
+    }
+    printf("[DAEMON] Pinned to CPU core %d\n", cpu_core);
+    fflush(stdout);
+
     libbpf_set_print(libbpf_print_silent);
 
-    /* --- Connect to PostgreSQL (persistent connection for LISTEN) --- */
     printf("[DAEMON] Connecting to PostgreSQL...\n");
     PGconn *listen_conn = PQconnectdb(db_url);
     if (PQstatus(listen_conn) != CONNECTION_OK) {
@@ -126,7 +148,6 @@ int main(int argc, char **argv) {
     }
     printf("[DAEMON] Connected.\n");
 
-    /* --- Subscribe to the notification channel --- */
     PGresult *res = PQexec(listen_conn, "LISTEN " NOTIFY_CHANNEL);
     if (PQresultStatus(res) != PGRES_COMMAND_OK) {
         fprintf(stderr, "[DAEMON] LISTEN failed: %s\n", PQerrorMessage(listen_conn));
@@ -138,12 +159,10 @@ int main(int argc, char **argv) {
 
     printf("[DAEMON] Ready. Listening on channel '" NOTIFY_CHANNEL "'.\n");
     printf("[DAEMON] To start XDP forwarder, run in PostgreSQL:\n");
-    printf("[DAEMON]   SELECT pg_notify('" NOTIFY_CHANNEL "', '1');  -- replace 1 with your config ID\n\n");
+    printf("[DAEMON]   SELECT pg_notify('" NOTIFY_CHANNEL "', '1');\n\n");
     fflush(stdout);
 
-    /* --- Main daemon loop --- */
     while (1) {
-        /* Wait for a NOTIFY with a config ID */
         int config_id = wait_for_notify(listen_conn);
         if (config_id < 0) {
             fprintf(stderr, "[DAEMON] Error receiving notification. Exiting.\n");
@@ -153,19 +172,17 @@ int main(int argc, char **argv) {
         printf("[DAEMON] Starting XDP forwarder with config ID=%d...\n", config_id);
         fflush(stdout);
 
-        /* Load config from PostgreSQL */
         struct app_config cfg;
         if (config_load_from_db(&cfg, config_id, db_url) != 0) {
             fprintf(stderr, "[DAEMON] Failed to load config ID=%d. Waiting for next notification...\n",
                     config_id);
-            continue; /* Don't exit — wait for next valid notification */
+            continue;
         }
 
         printf("[DAEMON] Config loaded: LOCAL=%d WAN=%d crypto=%s\n",
                cfg.local_count, cfg.wan_count,
                cfg.crypto_enabled ? "enabled" : "disabled");
 
-        /* Initialize and run the forwarder */
         struct forwarder fwd;
         if (forwarder_init(&fwd, &cfg) != 0) {
             fprintf(stderr, "[DAEMON] Failed to initialize forwarder. Waiting for next notification...\n");
@@ -175,7 +192,7 @@ int main(int argc, char **argv) {
         printf("[DAEMON] Forwarder running...\n");
         fflush(stdout);
 
-        forwarder_run(&fwd);      /* Blocks until forwarder stops */
+        forwarder_run(&fwd);
         forwarder_cleanup(&fwd);
 
         printf("[DAEMON] Forwarder stopped. Waiting for next notification...\n\n");

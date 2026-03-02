@@ -321,6 +321,34 @@ uint16_t crypto_calc_ip_checksum(const uint8_t *ip_hdr, int hdr_len) {
     return (uint16_t)(~sum);
 }
 
+uint16_t crypto_calc_tcp_checksum(const uint8_t *ip_hdr, int ip_hdr_len,
+                                   const uint8_t *tcp_seg, int tcp_seg_len) {
+    if (ip_hdr_len < 20 || tcp_seg_len < 20) return 0;
+    uint32_t sum = 0;
+    sum += ((uint16_t)ip_hdr[12] << 8) | ip_hdr[13];
+    sum += ((uint16_t)ip_hdr[14] << 8) | ip_hdr[15];
+    sum += ((uint16_t)ip_hdr[16] << 8) | ip_hdr[17];
+    sum += ((uint16_t)ip_hdr[18] << 8) | ip_hdr[19];
+    sum += (uint16_t)6;
+    sum += (uint16_t)(tcp_seg_len & 0xFFFF);
+    for (int i = 0; i < tcp_seg_len; i += 2) {
+        uint16_t word;
+        if (i == 16 && i + 2 <= tcp_seg_len) {
+            word = 0;
+        } else {
+            word = ((uint16_t)tcp_seg[i] << 8);
+            if (i + 1 < tcp_seg_len)
+                word |= tcp_seg[i + 1];
+            else
+                word |= 0;
+        }
+        sum += word;
+    }
+    while (sum >> 16)
+        sum = (sum & 0xFFFF) + (sum >> 16);
+    return (uint16_t)(~sum);
+}
+
 void crypto_restore_ipv4_header(uint8_t *packet, size_t pkt_len) {
     (void)pkt_len;
     packet[12] = 0x08;

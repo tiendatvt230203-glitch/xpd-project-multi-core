@@ -1,10 +1,3 @@
-/*
- * db_config.c — Load app_config from PostgreSQL by config ID.
- *
- * Uses libpq. Only changes the INPUT mechanism; all validation and
- * downstream logic (forwarder, crypto, XDP) remain untouched.
- */
-
 #include "../inc/db_config.h"
 #include "../inc/config.h"
 
@@ -14,23 +7,14 @@
 #include <arpa/inet.h>
 #include <libpq-fe.h>
 
-/* ------------------------------------------------------------------ */
-/* Internal helpers                                                     */
-/* ------------------------------------------------------------------ */
-
 static void db_finish(PGconn *conn, PGresult *res) {
     if (res)  PQclear(res);
     if (conn) PQfinish(conn);
 }
 
-/*
- * Load [GLOBAL] + [CRYPTO] section from xdp_configs row.
- * Returns 0 on success, -1 on error.
- */
 static int load_global_row(struct app_config *cfg, PGresult *res,
                            char *crypto_key_hex, size_t key_hex_len)
 {
-    /* GLOBAL */
     const char *v;
 
     v = PQgetvalue(res, 0, PQfnumber(res, "global_frame_size"));
@@ -39,7 +23,6 @@ static int load_global_row(struct app_config *cfg, PGresult *res,
     v = PQgetvalue(res, 0, PQfnumber(res, "global_batch_size"));
     cfg->global_batch_size = v ? atoi(v) : 0;
 
-    /* CRYPTO */
     v = PQgetvalue(res, 0, PQfnumber(res, "crypto_enabled"));
     cfg->crypto_enabled = v ? atoi(v) : 0;
 
@@ -96,7 +79,6 @@ static int load_global_row(struct app_config *cfg, PGresult *res,
         }
     }
 
-    /* crypto key — stored as hex string in DB */
     v = PQgetvalue(res, 0, PQfnumber(res, "crypto_key"));
     if (v && v[0] != '\0') {
         strncpy(crypto_key_hex, v, key_hex_len - 1);
@@ -106,10 +88,6 @@ static int load_global_row(struct app_config *cfg, PGresult *res,
     return 0;
 }
 
-/*
- * Load all [LOCAL] rows for this config_id.
- * Returns 0 on success, -1 on error.
- */
 static int load_local_rows(struct app_config *cfg, PGresult *res)
 {
     int nrows = PQntuples(res);
@@ -126,7 +104,6 @@ static int load_local_rows(struct app_config *cfg, PGresult *res)
         struct local_config *loc = &cfg->locals[cfg->local_count];
         memset(loc, 0, sizeof(*loc));
 
-        /* Inherit global defaults */
         loc->frame_size  = cfg->global_frame_size;
         loc->batch_size  = cfg->global_batch_size;
         loc->queue_count = 1;
@@ -184,10 +161,6 @@ static int load_local_rows(struct app_config *cfg, PGresult *res)
     return 0;
 }
 
-/*
- * Load all [WAN] rows for this config_id.
- * Returns 0 on success, -1 on error.
- */
 static int load_wan_rows(struct app_config *cfg, PGresult *res)
 {
     int nrows = PQntuples(res);
@@ -256,10 +229,6 @@ static int load_wan_rows(struct app_config *cfg, PGresult *res)
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
-/* Public API                                                           */
-/* ------------------------------------------------------------------ */
-
 int config_load_from_db(struct app_config *cfg, int config_id, const char *conn_str)
 {
     if (!cfg || !conn_str) {
@@ -270,7 +239,6 @@ int config_load_from_db(struct app_config *cfg, int config_id, const char *conn_
     memset(cfg, 0, sizeof(*cfg));
     strncpy(cfg->bpf_file, "bpf/xdp_redirect.o", sizeof(cfg->bpf_file) - 1);
 
-    /* --- Connect --- */
     PGconn *conn = PQconnectdb(conn_str);
     if (PQstatus(conn) != CONNECTION_OK) {
         fprintf(stderr, "[DB] Connection failed: %s\n", PQerrorMessage(conn));
@@ -282,7 +250,6 @@ int config_load_from_db(struct app_config *cfg, int config_id, const char *conn_
     char id_str[32];
     snprintf(id_str, sizeof(id_str), "%d", config_id);
 
-    /* --- 1. Load GLOBAL + CRYPTO from xdp_configs --- */
     {
         const char *params[1] = { id_str };
         PGresult *res = PQexecParams(conn,
@@ -312,7 +279,6 @@ int config_load_from_db(struct app_config *cfg, int config_id, const char *conn_
         PQclear(res);
     }
 
-    /* --- 2. Load LOCAL interfaces from xdp_local_configs --- */
     {
         const char *params[1] = { id_str };
         PGresult *res = PQexecParams(conn,
@@ -334,7 +300,6 @@ int config_load_from_db(struct app_config *cfg, int config_id, const char *conn_
         PQclear(res);
     }
 
-    /* --- 3. Load WAN interfaces from xdp_wan_configs --- */
     {
         const char *params[1] = { id_str };
         PGresult *res = PQexecParams(conn,
@@ -358,7 +323,6 @@ int config_load_from_db(struct app_config *cfg, int config_id, const char *conn_
 
     PQfinish(conn);
 
-    /* --- 4. Post-process crypto key (same logic as config_load) --- */
     if (cfg->nonce_size == 0) cfg->nonce_size = 12;
     if (cfg->aes_bits   == 0) cfg->aes_bits   = 128;
 
@@ -396,6 +360,5 @@ int config_load_from_db(struct app_config *cfg, int config_id, const char *conn_
         }
     }
 
-    /* --- 5. Validate (reuse existing validate function) --- */
     return config_validate(cfg);
 }

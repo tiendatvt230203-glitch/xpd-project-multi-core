@@ -203,6 +203,37 @@ static void *local_queue_thread(void *arg) {
 
             } 
             
+            else if (crypto_enabled && crypto_layer == 4 &&
+                frag_need_split_l4(pkt_lens[i])) {
+
+                uint8_t *pkt = (uint8_t *)pkt_ptrs[i];
+                uint32_t f1_len = 0, f2_len = 0;
+                if (frag_split_and_encrypt_l4(&crypto_ctx,
+                                              pkt, pkt_lens[i],
+                                              frag1_buf, &f1_len,
+                                              frag2_buf, &f2_len) != 0) {
+                    __sync_fetch_and_add(&fwd->total_dropped, 1);
+                    continue;
+                }
+                uint32_t wire_total = f1_len + f2_len;
+                if (wire_total > pkt_lens[i]) {
+                    flow_table_add_bytes(&g_flow_table,
+                                         src_ip, dst_ip, src_port, dst_port,
+                                         protocol, wire_total - pkt_lens[i]);
+                }
+                if (interface_send_batch_queue(wan, tq, frag1_buf, f1_len) == 0) {
+                    __sync_fetch_and_add(&fwd->local_to_wan, 1);
+                    wan_used[wan_idx] = 1;
+                } else {
+                    __sync_fetch_and_add(&fwd->total_dropped, 1);
+                }
+                if (interface_send_batch_queue(wan, tq, frag2_buf, f2_len) == 0) {
+                    __sync_fetch_and_add(&fwd->local_to_wan, 1);
+                } else {
+                    __sync_fetch_and_add(&fwd->total_dropped, 1);
+                }
+            } 
+            
             else {
                 if (crypto_enabled && crypto_layer == 2) {
                     uint8_t *pkt = (uint8_t *)pkt_ptrs[i];
@@ -284,10 +315,19 @@ static void *wan_queue_thread(void *arg) {
             if (crypto_enabled && crypto_layer == 3 && frag_tbl) {
                 is_frag = frag_is_fragment(pkt, pkt_len, &frag_pkt_id, &frag_index);
             }
+            if (crypto_enabled && crypto_layer == 4 && frag_tbl) {
+                is_frag = frag_is_fragment_l4(pkt, pkt_len, &frag_pkt_id, &frag_index);
+            }
 
             if (is_frag) {
-                int dec_len = frag_decrypt_fragment(&crypto_ctx, pkt, pkt_len,
+                int dec_len;
+                if (crypto_layer == 4) {
+                    dec_len = frag_decrypt_fragment_l4(&crypto_ctx, pkt, pkt_len,
+                                                        &frag_pkt_id, &frag_index);
+                } else {
+                    dec_len = frag_decrypt_fragment(&crypto_ctx, pkt, pkt_len,
                                                      &frag_pkt_id, &frag_index);
+                }
                 if (dec_len < 0) {
                     __sync_fetch_and_add(&fwd->total_dropped, 1);
                     continue;
@@ -295,9 +335,13 @@ static void *wan_queue_thread(void *arg) {
                 pkt_len = (uint32_t)dec_len;
 
                 uint32_t reasm_len = 0;
-                int ret = frag_try_reassemble(frag_tbl, pkt, pkt_len,
-                                               frag_pkt_id, frag_index,
-                                               reassemble_buf, &reasm_len);
+                int ret = (crypto_layer == 4)
+                    ? frag_try_reassemble_l4(frag_tbl, pkt, pkt_len,
+                                             frag_pkt_id, frag_index,
+                                             reassemble_buf, &reasm_len)
+                    : frag_try_reassemble(frag_tbl, pkt, pkt_len,
+                                          frag_pkt_id, frag_index,
+                                          reassemble_buf, &reasm_len);
                 if (ret == 0) {
                     continue;
                 } 
@@ -459,7 +503,7 @@ void forwarder_run(struct forwarder *fwd) {
         total_wan_queues += fwd->wans[i].queue_count;
 
     struct frag_table *frag_tbls[MAX_INTERFACES] = {0};
-    if (crypto_enabled && crypto_layer == 3) {
+    if (crypto_enabled && (crypto_layer == 3 || crypto_layer == 4)) {
         for (int i = 0; i < fwd->wan_count; i++) {
             frag_tbls[i] = calloc(1, sizeof(struct frag_table));
             if (frag_tbls[i])
@@ -475,7 +519,6 @@ void forwarder_run(struct forwarder *fwd) {
     int frag_gc_counter = 0;
 
     while (running) {
-        /* LOCAL -> WAN */
         for (int li = 0; li < fwd->local_count && running; li++) {
             struct xsk_interface *local = &fwd->locals[li];
             int batch_size = local->batch_size;
@@ -507,7 +550,7 @@ void forwarder_run(struct forwarder *fwd) {
                     wan_idx = 0;
 
                 struct xsk_interface *wan = &fwd->wans[wan_idx];
-                int tq = 0; /* single-thread: always use queue 0 */
+                int tq = 0;
 
                 if (crypto_enabled && crypto_layer == 3 &&
                     frag_need_split(pkt_lens[i])) {
@@ -546,6 +589,37 @@ void forwarder_run(struct forwarder *fwd) {
                         __sync_fetch_and_add(&fwd->total_dropped, 1);
                     }
 
+                } else if (crypto_enabled && crypto_layer == 4 &&
+                    frag_need_split_l4(pkt_lens[i])) {
+
+                    uint8_t frag1_buf[2048];
+                    uint8_t frag2_buf[2048];
+                    uint32_t f1_len = 0, f2_len = 0;
+                    uint8_t *pkt = (uint8_t *)pkt_ptrs[i];
+                    if (frag_split_and_encrypt_l4(&crypto_ctx,
+                                                   pkt, pkt_lens[i],
+                                                   frag1_buf, &f1_len,
+                                                   frag2_buf, &f2_len) != 0) {
+                        __sync_fetch_and_add(&fwd->total_dropped, 1);
+                        continue;
+                    }
+                    uint32_t wire_total = f1_len + f2_len;
+                    if (wire_total > pkt_lens[i]) {
+                        flow_table_add_bytes(&g_flow_table,
+                                             src_ip, dst_ip, src_port, dst_port,
+                                             protocol, wire_total - pkt_lens[i]);
+                    }
+                    if (interface_send_batch_queue(wan, tq, frag1_buf, f1_len) == 0) {
+                        __sync_fetch_and_add(&fwd->local_to_wan, 1);
+                        wan_used[wan_idx] = 1;
+                    } else {
+                        __sync_fetch_and_add(&fwd->total_dropped, 1);
+                    }
+                    if (interface_send_batch_queue(wan, tq, frag2_buf, f2_len) == 0) {
+                        __sync_fetch_and_add(&fwd->local_to_wan, 1);
+                    } else {
+                        __sync_fetch_and_add(&fwd->total_dropped, 1);
+                    }
                 } else {
                     if (crypto_enabled && crypto_layer == 2) {
                         uint8_t *pkt = (uint8_t *)pkt_ptrs[i];
@@ -575,7 +649,6 @@ void forwarder_run(struct forwarder *fwd) {
             interface_recv_release(local, addrs, rcvd);
         }
 
-        /* WAN -> LOCAL */
         for (int wi = 0; wi < fwd->wan_count && running; wi++) {
             struct xsk_interface *wan = &fwd->wans[wi];
             int batch_size = wan->batch_size;
@@ -587,7 +660,7 @@ void forwarder_run(struct forwarder *fwd) {
                 continue;
 
             int local_used[MAX_INTERFACES] = {0};
-            struct frag_table *frag_tbl = (crypto_enabled && crypto_layer == 3) ? frag_tbls[wi] : NULL;
+            struct frag_table *frag_tbl = (crypto_enabled && (crypto_layer == 3 || crypto_layer == 4)) ? frag_tbls[wi] : NULL;
             uint8_t reassemble_buf[4096];
 
             for (int i = 0; i < rcvd; i++) {
@@ -603,10 +676,19 @@ void forwarder_run(struct forwarder *fwd) {
                 if (crypto_enabled && crypto_layer == 3 && frag_tbl) {
                     is_frag = frag_is_fragment(pkt, pkt_len, &frag_pkt_id, &frag_index);
                 }
+                if (crypto_enabled && crypto_layer == 4 && frag_tbl) {
+                    is_frag = frag_is_fragment_l4(pkt, pkt_len, &frag_pkt_id, &frag_index);
+                }
 
                 if (is_frag) {
-                    int dec_len = frag_decrypt_fragment(&crypto_ctx, pkt, pkt_len,
-                                                         &frag_pkt_id, &frag_index);
+                    int dec_len;
+                    if (crypto_layer == 4) {
+                        dec_len = frag_decrypt_fragment_l4(&crypto_ctx, pkt, pkt_len,
+                                                             &frag_pkt_id, &frag_index);
+                    } else {
+                        dec_len = frag_decrypt_fragment(&crypto_ctx, pkt, pkt_len,
+                                                        &frag_pkt_id, &frag_index);
+                    }
                     if (dec_len < 0) {
                         __sync_fetch_and_add(&fwd->total_dropped, 1);
                         continue;
@@ -614,9 +696,13 @@ void forwarder_run(struct forwarder *fwd) {
                     pkt_len = (uint32_t)dec_len;
 
                     uint32_t reasm_len = 0;
-                    int ret = frag_try_reassemble(frag_tbl, pkt, pkt_len,
+                    int ret = (crypto_layer == 4)
+                        ? frag_try_reassemble_l4(frag_tbl, pkt, pkt_len,
                                                   frag_pkt_id, frag_index,
-                                                  reassemble_buf, &reasm_len);
+                                                  reassemble_buf, &reasm_len)
+                        : frag_try_reassemble(frag_tbl, pkt, pkt_len,
+                                               frag_pkt_id, frag_index,
+                                               reassemble_buf, &reasm_len);
                     if (ret == 0) {
                         continue;
                     } else if (ret == 1) {
@@ -649,7 +735,7 @@ void forwarder_run(struct forwarder *fwd) {
 
                 struct xsk_interface *local_iface = &fwd->locals[local_idx];
                 struct local_config *local_cfg = &fwd->cfg->locals[local_idx];
-                int tq = 0; /* single-thread: always use queue 0 */
+                int tq = 0;
 
                 if (interface_send_to_local_batch_queue(local_iface, tq, local_cfg,
                                                         final_pkt, final_len) == 0) {
@@ -681,7 +767,7 @@ void forwarder_run(struct forwarder *fwd) {
         }
     }
 
-    if (crypto_enabled && crypto_layer == 3) {
+    if (crypto_enabled && (crypto_layer == 3 || crypto_layer == 4)) {
         for (int i = 0; i < fwd->wan_count; i++) {
             if (frag_tbls[i])
                 free(frag_tbls[i]);
