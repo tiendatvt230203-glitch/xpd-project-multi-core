@@ -5,6 +5,7 @@ set -euo pipefail
 DB_USER="sep"
 DB_NAME="xdpdb"
 DB_HOST="localhost"
+export PGPASSWORD='ttEfyMW$)}\^>D<TF|T,Qq'
 
 echo "=== XDP DB INIT ==="
 echo "User:    ${DB_USER}"
@@ -23,4 +24,5 @@ psql -h "${DB_HOST}" -U "${DB_USER}" -d "${DB_NAME}" -f schema.sql
 
 echo
 echo "Done. Database ${DB_NAME} is clean and has tables ready."
+
 

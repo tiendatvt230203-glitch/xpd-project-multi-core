@@ -6,6 +6,7 @@ DB_USER="sep"
 DB_NAME="xdpdb"
 DB_HOST="localhost"
 SQL_DIR="sql_options"
+export PGPASSWORD='ttEfyMW$)}\^>D<TF|T,Qq'
 
 usage() {
   echo "Usage: $0 <config_id>"
