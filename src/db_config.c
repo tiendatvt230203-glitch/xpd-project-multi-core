@@ -17,17 +17,8 @@ static int load_global_row(struct app_config *cfg, PGresult *res,
 {
     const char *v;
 
-    v = PQgetvalue(res, 0, PQfnumber(res, "global_frame_size"));
-    cfg->global_frame_size = v ? atoi(v) : 0;
-
-    v = PQgetvalue(res, 0, PQfnumber(res, "global_batch_size"));
-    cfg->global_batch_size = v ? atoi(v) : 0;
-
     v = PQgetvalue(res, 0, PQfnumber(res, "crypto_enabled"));
     cfg->crypto_enabled = v ? atoi(v) : 0;
-
-    v = PQgetvalue(res, 0, PQfnumber(res, "rotate_interval"));
-    cfg->rotate_interval = v ? atoi(v) : 0;
 
     v = PQgetvalue(res, 0, PQfnumber(res, "encrypt_layer"));
     cfg->encrypt_layer = v ? atoi(v) : 0;
@@ -106,7 +97,9 @@ static int load_local_rows(struct app_config *cfg, PGresult *res)
 
         loc->frame_size  = cfg->global_frame_size;
         loc->batch_size  = cfg->global_batch_size;
-        loc->queue_count = 1;
+        loc->umem_mb     = DEFAULT_UMEM_MB_LOCAL;
+        loc->ring_size   = DEFAULT_RING_SIZE;
+        loc->queue_count = DEFAULT_QUEUE_COUNT;
 
         const char *v;
 
@@ -141,21 +134,6 @@ static int load_local_rows(struct app_config *cfg, PGresult *res)
             }
         }
 
-        v = PQgetvalue(res, row, PQfnumber(res, "umem_mb"));
-        loc->umem_mb = v ? atoi(v) : 0;
-
-        v = PQgetvalue(res, row, PQfnumber(res, "ring_size"));
-        loc->ring_size = v ? atoi(v) : 0;
-
-        v = PQgetvalue(res, row, PQfnumber(res, "frame_size"));
-        if (v && atoi(v) > 0) loc->frame_size = atoi(v);
-
-        v = PQgetvalue(res, row, PQfnumber(res, "batch_size"));
-        if (v && atoi(v) > 0) loc->batch_size = atoi(v);
-
-        v = PQgetvalue(res, row, PQfnumber(res, "queue_count"));
-        if (v && atoi(v) >= 1) loc->queue_count = atoi(v);
-
         cfg->local_count++;
     }
     return 0;
@@ -177,9 +155,12 @@ static int load_wan_rows(struct app_config *cfg, PGresult *res)
         struct wan_config *wan = &cfg->wans[cfg->wan_count];
         memset(wan, 0, sizeof(*wan));
 
-        wan->frame_size  = cfg->global_frame_size;
-        wan->batch_size  = cfg->global_batch_size;
-        wan->queue_count = 1;
+        wan->frame_size   = cfg->global_frame_size;
+        wan->batch_size   = cfg->global_batch_size;
+        wan->window_size  = (uint32_t)(DEFAULT_WINDOW_KB * 1024);
+        wan->umem_mb      = DEFAULT_UMEM_MB_WAN;
+        wan->ring_size    = DEFAULT_RING_SIZE;
+        wan->queue_count  = DEFAULT_QUEUE_COUNT;
 
         const char *v;
 
@@ -206,24 +187,6 @@ static int load_wan_rows(struct app_config *cfg, PGresult *res)
             }
         }
 
-        v = PQgetvalue(res, row, PQfnumber(res, "window_kb"));
-        wan->window_size = v ? (uint32_t)(atoi(v) * 1024) : 0;
-
-        v = PQgetvalue(res, row, PQfnumber(res, "umem_mb"));
-        wan->umem_mb = v ? atoi(v) : 0;
-
-        v = PQgetvalue(res, row, PQfnumber(res, "ring_size"));
-        wan->ring_size = v ? atoi(v) : 0;
-
-        v = PQgetvalue(res, row, PQfnumber(res, "frame_size"));
-        if (v && atoi(v) > 0) wan->frame_size = atoi(v);
-
-        v = PQgetvalue(res, row, PQfnumber(res, "batch_size"));
-        if (v && atoi(v) > 0) wan->batch_size = atoi(v);
-
-        v = PQgetvalue(res, row, PQfnumber(res, "queue_count"));
-        if (v && atoi(v) >= 1) wan->queue_count = atoi(v);
-
         cfg->wan_count++;
     }
     return 0;
@@ -238,6 +201,8 @@ int config_load_from_db(struct app_config *cfg, int config_id, const char *conn_
 
     memset(cfg, 0, sizeof(*cfg));
     strncpy(cfg->bpf_file, "bpf/xdp_redirect.o", sizeof(cfg->bpf_file) - 1);
+    cfg->global_frame_size = DEFAULT_FRAME_SIZE;
+    cfg->global_batch_size = DEFAULT_BATCH_SIZE;
 
     PGconn *conn = PQconnectdb(conn_str);
     if (PQstatus(conn) != CONNECTION_OK) {
@@ -253,8 +218,7 @@ int config_load_from_db(struct app_config *cfg, int config_id, const char *conn_
     {
         const char *params[1] = { id_str };
         PGresult *res = PQexecParams(conn,
-            "SELECT global_frame_size, global_batch_size, "
-            "       crypto_enabled, crypto_key, rotate_interval, encrypt_layer, "
+            "SELECT crypto_enabled, crypto_key, encrypt_layer, "
             "       fake_protocol, crypto_mode, aes_bits, nonce_size, "
             "       fake_ethertype_ipv4, fake_ethertype_ipv6 "
             "FROM xdp_configs WHERE id = $1",
@@ -282,8 +246,7 @@ int config_load_from_db(struct app_config *cfg, int config_id, const char *conn_
     {
         const char *params[1] = { id_str };
         PGresult *res = PQexecParams(conn,
-            "SELECT ifname, network, src_mac, dst_mac, "
-            "       umem_mb, ring_size, frame_size, batch_size, queue_count "
+            "SELECT ifname, network, src_mac, dst_mac "
             "FROM xdp_local_configs WHERE config_id = $1 ORDER BY id",
             1, NULL, params, NULL, NULL, 0);
 
@@ -303,8 +266,7 @@ int config_load_from_db(struct app_config *cfg, int config_id, const char *conn_
     {
         const char *params[1] = { id_str };
         PGresult *res = PQexecParams(conn,
-            "SELECT ifname, src_mac, dst_mac, window_kb, "
-            "       umem_mb, ring_size, frame_size, batch_size, queue_count "
+            "SELECT ifname, src_mac, dst_mac "
             "FROM xdp_wan_configs WHERE config_id = $1 ORDER BY id",
             1, NULL, params, NULL, NULL, 0);
 

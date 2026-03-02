@@ -5,7 +5,6 @@
 #include "../inc/crypto_layer4.h"
 #include <string.h>
 #include <stdio.h>
-#include <time.h>
 #include <openssl/evp.h>
 #include <openssl/hmac.h>
 #include <openssl/rand.h>
@@ -117,19 +116,7 @@ static void derive_key(const uint8_t master[AES_MAX_KEY_SIZE],
 }
 
 void packet_crypto_update_keys(struct packet_crypto_ctx *ctx) {
-    if (!ctx || !ctx->initialized) return;
-
-    uint64_t now_epoch = (uint64_t)time(NULL) / ctx->rotate_interval;
-
-    if (now_epoch == ctx->current_epoch) return;
-
-    ctx->current_epoch = now_epoch;
-
-    derive_key(ctx->master_key, now_epoch - 1, ctx->keys[KEY_SLOT_PREV]);
-    derive_key(ctx->master_key, now_epoch,     ctx->keys[KEY_SLOT_CURRENT]);
-    derive_key(ctx->master_key, now_epoch + 1, ctx->keys[KEY_SLOT_NEXT]);
-
-    packet_crypto_reset_counter();
+    (void)ctx;
 }
 
 const uint8_t *packet_crypto_get_key(struct packet_crypto_ctx *ctx, int slot) {
@@ -138,23 +125,18 @@ const uint8_t *packet_crypto_get_key(struct packet_crypto_ctx *ctx, int slot) {
 }
 
 int packet_crypto_init(struct packet_crypto_ctx *ctx,
-                       const uint8_t master_key[AES_MAX_KEY_SIZE],
-                       uint32_t rotate_interval) {
+                       const uint8_t master_key[AES_MAX_KEY_SIZE]) {
     if (!ctx || !master_key) return -1;
 
     int key_size = get_key_size();
 
     memset(ctx, 0, sizeof(*ctx));
     memcpy(ctx->master_key, master_key, key_size);
-    ctx->rotate_interval = (rotate_interval > 0) ? rotate_interval : 600;
     ctx->initialized = true;
 
-    uint64_t now_epoch = (uint64_t)time(NULL) / ctx->rotate_interval;
-    ctx->current_epoch = now_epoch;
-
-    derive_key(ctx->master_key, now_epoch - 1, ctx->keys[KEY_SLOT_PREV]);
-    derive_key(ctx->master_key, now_epoch,     ctx->keys[KEY_SLOT_CURRENT]);
-    derive_key(ctx->master_key, now_epoch + 1, ctx->keys[KEY_SLOT_NEXT]);
+    derive_key(ctx->master_key, 0, ctx->keys[KEY_SLOT_PREV]);
+    derive_key(ctx->master_key, 0, ctx->keys[KEY_SLOT_CURRENT]);
+    derive_key(ctx->master_key, 0, ctx->keys[KEY_SLOT_NEXT]);
 
     packet_crypto_reset_counter();
 

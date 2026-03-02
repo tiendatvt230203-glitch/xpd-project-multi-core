@@ -13,6 +13,14 @@
 #define CRYPTO_MODE_CTR  0
 #define CRYPTO_MODE_GCM  1
 
+#define DEFAULT_FRAME_SIZE      4096
+#define DEFAULT_BATCH_SIZE      1024
+#define DEFAULT_UMEM_MB_LOCAL   512
+#define DEFAULT_UMEM_MB_WAN     256
+#define DEFAULT_RING_SIZE       8192
+#define DEFAULT_WINDOW_KB       2048
+#define DEFAULT_QUEUE_COUNT     1
+
 struct local_config {
     char ifname[IF_NAMESIZE];
     uint32_t ip;
@@ -53,7 +61,6 @@ struct app_config {
 
     int crypto_enabled;
     uint8_t crypto_key[AES_KEY_LEN];
-    uint32_t rotate_interval;
     int encrypt_layer;
     uint16_t fake_ethertype_ipv4;
     uint16_t fake_ethertype_ipv6;

@@ -25,19 +25,15 @@
 struct packet_crypto_ctx {
     uint8_t master_key[AES_MAX_KEY_SIZE];
     uint8_t keys[KEY_SLOT_COUNT][AES_MAX_KEY_SIZE];
-    uint64_t current_epoch;
-    uint32_t rotate_interval;
     bool initialized;
 };
 
 int packet_crypto_init(struct packet_crypto_ctx *ctx,
-                       const uint8_t master_key[AES_MAX_KEY_SIZE],
-                       uint32_t rotate_interval);
+                       const uint8_t master_key[AES_MAX_KEY_SIZE]);
 
 void packet_crypto_update_keys(struct packet_crypto_ctx *ctx);
 
 uint32_t packet_crypto_next_counter(void);
-
 void packet_crypto_reset_counter(void);
 
 const uint8_t *packet_crypto_get_key(struct packet_crypto_ctx *ctx, int slot);

@@ -418,7 +418,7 @@ int forwarder_init(struct forwarder *fwd, struct app_config *cfg) {
     crypto_layer = cfg->encrypt_layer;
     if (crypto_enabled) {
         packet_crypto_set_aes_bits(cfg->aes_bits);
-        if (packet_crypto_init(&crypto_ctx, cfg->crypto_key, cfg->rotate_interval) != 0) {
+        if (packet_crypto_init(&crypto_ctx, cfg->crypto_key) != 0) {
             fprintf(stderr, "Failed to initialize AES-%d encryption\n", cfg->aes_bits);
             return -1;
         }
