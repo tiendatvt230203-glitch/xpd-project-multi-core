@@ -1,10 +1,7 @@
 CREATE TABLE IF NOT EXISTS xdp_configs (
     id SERIAL PRIMARY KEY,
-    global_frame_size INT DEFAULT 2048,
-    global_batch_size INT DEFAULT 256,
     crypto_enabled INT DEFAULT 0,
     crypto_key TEXT,
-    rotate_interval INT DEFAULT 0,
     encrypt_layer INT DEFAULT 0,
     fake_protocol INT DEFAULT 0,
     crypto_mode TEXT DEFAULT 'ctr',
@@ -20,12 +17,7 @@ CREATE TABLE IF NOT EXISTS xdp_local_configs (
     ifname VARCHAR(32) NOT NULL,
     network TEXT,
     src_mac TEXT,
-    dst_mac TEXT,
-    umem_mb INT DEFAULT 0,
-    ring_size INT DEFAULT 0,
-    frame_size INT DEFAULT 0,
-    batch_size INT DEFAULT 0,
-    queue_count INT DEFAULT 1
+    dst_mac TEXT
 );
 
 CREATE TABLE IF NOT EXISTS xdp_wan_configs (
@@ -33,13 +25,7 @@ CREATE TABLE IF NOT EXISTS xdp_wan_configs (
     config_id INT NOT NULL REFERENCES xdp_configs(id) ON DELETE CASCADE,
     ifname VARCHAR(32) NOT NULL,
     src_mac TEXT,
-    dst_mac TEXT,
-    window_kb INT DEFAULT 0,
-    umem_mb INT DEFAULT 0,
-    ring_size INT DEFAULT 0,
-    frame_size INT DEFAULT 0,
-    batch_size INT DEFAULT 0,
-    queue_count INT DEFAULT 1
+    dst_mac TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_local_config_id ON xdp_local_configs(config_id);
