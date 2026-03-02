@@ -65,10 +65,6 @@ echo "Config ID: ${CONFIG_ID}"
 echo "SQL file:  ${SQL_FILE}"
 echo
 
-read -s -p "PostgreSQL password for user ${DB_USER}: " PGPASSWORD
-echo
-export PGPASSWORD
-
 echo "[1/2] Import SQL for config_id=${CONFIG_ID}"
 psql -h "${DB_HOST}" -U "${DB_USER}" -d "${DB_NAME}" -f "${SQL_FILE}"
 
@@ -77,6 +73,4 @@ psql -h "${DB_HOST}" -U "${DB_USER}" -d "${DB_NAME}" -c "SELECT pg_notify('xdp_s
 
 echo
 echo "Đã load option ID=${CONFIG_ID} cho ${ROLE} và gửi NOTIFY. Kiểm tra log của daemon để xác nhận."
-
-unset PGPASSWORD
 

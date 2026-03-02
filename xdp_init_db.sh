@@ -12,10 +12,6 @@ echo "DB name: ${DB_NAME}"
 echo "Host:    ${DB_HOST}"
 echo
 
-read -s -p "PostgreSQL password for user ${DB_USER}: " PGPASSWORD
-echo
-export PGPASSWORD
-
 echo "[1/3] Drop database if exists: ${DB_NAME}"
 psql -h "${DB_HOST}" -U "${DB_USER}" -d postgres -c "DROP DATABASE IF EXISTS ${DB_NAME};"
 
@@ -27,6 +23,4 @@ psql -h "${DB_HOST}" -U "${DB_USER}" -d "${DB_NAME}" -f schema.sql
 
 echo
 echo "Done. Database ${DB_NAME} is clean and has tables ready."
-
-unset PGPASSWORD
 
