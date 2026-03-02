@@ -1,4 +1,4 @@
-	CREATE TABLE IF NOT EXISTS xdp_configs (
+CREATE TABLE IF NOT EXISTS xdp_configs (
     id SERIAL PRIMARY KEY,
     global_frame_size INT DEFAULT 2048,
     global_batch_size INT DEFAULT 256,
