@@ -6,9 +6,7 @@ CREATE TABLE IF NOT EXISTS xdp_configs (
     fake_protocol INT DEFAULT 0,
     crypto_mode TEXT DEFAULT 'ctr',
     aes_bits INT DEFAULT 128,
-    nonce_size INT DEFAULT 12,
-    fake_ethertype_ipv4 TEXT,
-    fake_ethertype_ipv6 TEXT
+    nonce_size INT DEFAULT 12
 );
 
 CREATE TABLE IF NOT EXISTS xdp_local_configs (

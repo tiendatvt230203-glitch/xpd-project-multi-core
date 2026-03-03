@@ -10,11 +10,9 @@ INSERT INTO xdp_configs (
     fake_protocol,
     crypto_mode,
     aes_bits,
-    nonce_size,
-    fake_ethertype_ipv4,
-    fake_ethertype_ipv6
+    nonce_size
 ) VALUES
-(3, 1, '2b7e151628aed2a6abf7158809cf4f3c', 2, 0, 'gcm', 128, 16, '88B6', '88B7');
+(3, 1, '2b7e151628aed2a6abf7158809cf4f3c', 2, 0, 'gcm', 128, 16);
 
 INSERT INTO xdp_local_configs (
     config_id,

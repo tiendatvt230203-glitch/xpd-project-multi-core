@@ -10,24 +10,22 @@ INSERT INTO xdp_configs (
     fake_protocol,
     crypto_mode,
     aes_bits,
-    nonce_size,
-    fake_ethertype_ipv4,
-    fake_ethertype_ipv6
+    nonce_size
 ) VALUES
-(1,  1, '2b7e151628aed2a6abf7158809cf4f3c',                                                          2,  0, 'ctr', 128, 16, '88B6', '88B7'),
-(2,  1, '5cb0851b5b2408bbed5dd5672cc4b04564857bfe6c518d92fcacc938a789aab6',                          2,  0, 'ctr', 256, 16, '88B6', '88B7'),
-(3,  1, '2b7e151628aed2a6abf7158809cf4f3c',                                                          2,  0, 'gcm', 128, 16, '88B6', '88B7'),
-(4,  1, '5cb0851b5b2408bbed5dd5672cc4b04564857bfe6c518d92fcacc938a789aab6',                          2,  0, 'gcm', 256, 16, '88B6', '88B7'),
-(5,  1, '5cb0851b5b2408bbed5dd5672cc4b04564857bfe6c518d92fcacc938a789aab6',                          2,  0, 'gcm', 256, 16, '88B6', NULL),
-(6,  1, '2b7e151628aed2a6abf7158809cf4f3c',                                                          3, 99, 'ctr', 128, 16, NULL,  NULL),
-(7,  1, '5cb0851b5b2408bbed5dd5672cc4b04564857bfe6c518d92fcacc938a789aab6',                          3, 99, 'ctr', 256, 16, NULL,  NULL),
-(8,  1, '2b7e151628aed2a6abf7158809cf4f3c',                                                          3, 99, 'gcm', 128, 16, NULL,  NULL),
-(9,  1, '5cb0851b5b2408bbed5dd5672cc4b04564857bfe6c518d92fcacc938a789aab6',                          3, 99, 'gcm', 256, 16, NULL,  NULL),
-(10, 1, '2b7e151628aed2a6abf7158809cf4f3c',                                                          4, 99, 'ctr', 128, 16, NULL,  NULL),
-(11, 1, '5cb0851b5b2408bbed5dd5672cc4b04564857bfe6c518d92fcacc938a789aab6',                          4, 99, 'ctr', 256, 16, NULL,  NULL),
-(12, 1, '2b7e151628aed2a6abf7158809cf4f3c',                                                          4, 99, 'gcm', 128, 16, NULL,  NULL),
-(13, 1, '5cb0851b5b2408bbed5dd5672cc4b04564857bfe6c518d92fcacc938a789aab6',                          4, 99, 'gcm', 256, 16, NULL,  NULL),
-(14, 0, NULL,                                                                                        0,  0, 'ctr', 128, 12, NULL,  NULL);
+(1,  1, '2b7e151628aed2a6abf7158809cf4f3c',                                                          2,  0, 'ctr', 128, 16),
+(2,  1, '5cb0851b5b2408bbed5dd5672cc4b04564857bfe6c518d92fcacc938a789aab6',                          2,  0, 'ctr', 256, 16),
+(3,  1, '2b7e151628aed2a6abf7158809cf4f3c',                                                          2,  0, 'gcm', 128, 16),
+(4,  1, '5cb0851b5b2408bbed5dd5672cc4b04564857bfe6c518d92fcacc938a789aab6',                          2,  0, 'gcm', 256, 16),
+(5,  1, '5cb0851b5b2408bbed5dd5672cc4b04564857bfe6c518d92fcacc938a789aab6',                          2,  0, 'gcm', 256, 16),
+(6,  1, '2b7e151628aed2a6abf7158809cf4f3c',                                                          3, 99, 'ctr', 128, 16),
+(7,  1, '5cb0851b5b2408bbed5dd5672cc4b04564857bfe6c518d92fcacc938a789aab6',                          3, 99, 'ctr', 256, 16),
+(8,  1, '2b7e151628aed2a6abf7158809cf4f3c',                                                          3, 99, 'gcm', 128, 16),
+(9,  1, '5cb0851b5b2408bbed5dd5672cc4b04564857bfe6c518d92fcacc938a789aab6',                          3, 99, 'gcm', 256, 16),
+(10, 1, '2b7e151628aed2a6abf7158809cf4f3c',                                                          4, 99, 'ctr', 128, 16),
+(11, 1, '5cb0851b5b2408bbed5dd5672cc4b04564857bfe6c518d92fcacc938a789aab6',                          4, 99, 'ctr', 256, 16),
+(12, 1, '2b7e151628aed2a6abf7158809cf4f3c',                                                          4, 99, 'gcm', 128, 16),
+(13, 1, '5cb0851b5b2408bbed5dd5672cc4b04564857bfe6c518d92fcacc938a789aab6',                          4, 99, 'gcm', 256, 16),
+(14, 0, NULL,                                                                                        0,  0, 'ctr', 128, 12);
 
 SELECT setval('xdp_configs_id_seq', 14, true);
 

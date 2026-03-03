@@ -48,16 +48,9 @@ int packet_decrypt(struct packet_crypto_ctx *ctx,
 
 void packet_crypto_cleanup(struct packet_crypto_ctx *ctx);
 
-void packet_crypto_set_ethertype(uint16_t fake_ipv4, uint16_t fake_ipv6);
-uint16_t packet_crypto_get_fake_ethertype_ipv4(void);
-uint16_t packet_crypto_get_fake_ethertype_ipv6(void);
-
 #define AES128_GCM_TAG_SIZE  16
 
 int packet_crypto_get_tunnel_hdr_size(void);
-
-void packet_crypto_set_fake_protocol(uint8_t proto);
-uint8_t packet_crypto_get_fake_protocol(void);
 
 void crypto_write_l3_tunnel_header(uint8_t *buf, const uint8_t *nonce,
                                     int nonce_size, uint8_t orig_proto);

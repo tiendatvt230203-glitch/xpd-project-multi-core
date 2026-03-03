@@ -507,6 +507,226 @@ int frag_try_reassemble(struct frag_table *ft,
     return -1;
 }
 
+int frag_split_and_encrypt_l2(struct packet_crypto_ctx *ctx,
+                              const uint8_t *pkt_data, uint32_t pkt_len,
+                              uint8_t *frag1, uint32_t *frag1_len,
+                              uint8_t *frag2, uint32_t *frag2_len) {
+    if (pkt_len < 14 + 20)
+        return -1;
+
+    const uint8_t *eth_hdr = pkt_data;
+    const uint8_t *ip_hdr = pkt_data + 14;
+
+    uint16_t ether_type = ((uint16_t)pkt_data[12] << 8) | pkt_data[13];
+    int ip_hdr_len;
+
+    if (ether_type == 0x0800) {
+        ip_hdr_len = (ip_hdr[0] & 0x0F) * 4;
+        if (ip_hdr_len < 20) return -1;
+    } else if (ether_type == 0x86DD) {
+        ip_hdr_len = 40;
+    } else {
+        return -1;
+    }
+
+    if (pkt_len < (uint32_t)(14 + ip_hdr_len))
+        return -1;
+
+    const uint8_t *payload = pkt_data + 14 + ip_hdr_len;
+    uint32_t payload_len = pkt_len - 14 - ip_hdr_len;
+
+    uint32_t half1 = payload_len / 2;
+    uint32_t half2 = payload_len - half1;
+
+    /* fragment 0 */
+    {
+        uint32_t off = 0;
+        memcpy(frag1, eth_hdr, 14);
+        off += 14;
+
+        uint16_t pkt_id = frag_next_pkt_id();
+        frag_write_hdr(frag1 + off, pkt_id, 0);
+        off += FRAG_HDR_SIZE;
+
+        memcpy(frag1 + off, ip_hdr, ip_hdr_len);
+        off += ip_hdr_len;
+
+        memcpy(frag1 + off, payload, half1);
+        off += half1;
+
+        if (ether_type == 0x0800) {
+            uint16_t ip_total = (uint16_t)(ip_hdr_len + half1);
+            frag1[14 + FRAG_HDR_SIZE + 2] = (uint8_t)(ip_total >> 8);
+            frag1[14 + FRAG_HDR_SIZE + 3] = (uint8_t)(ip_total & 0xFF);
+
+            frag1[14 + FRAG_HDR_SIZE + 10] = 0;
+            frag1[14 + FRAG_HDR_SIZE + 11] = 0;
+            uint16_t cksum = crypto_calc_ip_checksum(frag1 + 14 + FRAG_HDR_SIZE, ip_hdr_len);
+            frag1[14 + FRAG_HDR_SIZE + 10] = (uint8_t)(cksum >> 8);
+            frag1[14 + FRAG_HDR_SIZE + 11] = (uint8_t)(cksum & 0xFF);
+        } else {
+            uint16_t ipv6_paylen = (uint16_t)half1;
+            frag1[14 + FRAG_HDR_SIZE + 4] = (uint8_t)(ipv6_paylen >> 8);
+            frag1[14 + FRAG_HDR_SIZE + 5] = (uint8_t)(ipv6_paylen & 0xFF);
+        }
+
+        int enc_len = crypto_layer2_encrypt(ctx, frag1, off);
+        if (enc_len < 0) return -1;
+        *frag1_len = (uint32_t)enc_len;
+    }
+
+    /* fragment 1 */
+    {
+        uint32_t off = 0;
+        memcpy(frag2, eth_hdr, 14);
+        off += 14;
+
+        uint16_t pkt_id = frag_next_pkt_id();
+        frag_write_hdr(frag2 + off, pkt_id, 1);
+        off += FRAG_HDR_SIZE;
+
+        memcpy(frag2 + off, ip_hdr, ip_hdr_len);
+        off += ip_hdr_len;
+
+        memcpy(frag2 + off, payload + half1, half2);
+        off += half2;
+
+        if (ether_type == 0x0800) {
+            uint16_t ip_total = (uint16_t)(ip_hdr_len + half2);
+            frag2[14 + FRAG_HDR_SIZE + 2] = (uint8_t)(ip_total >> 8);
+            frag2[14 + FRAG_HDR_SIZE + 3] = (uint8_t)(ip_total & 0xFF);
+
+            frag2[14 + FRAG_HDR_SIZE + 10] = 0;
+            frag2[14 + FRAG_HDR_SIZE + 11] = 0;
+            uint16_t cksum = crypto_calc_ip_checksum(frag2 + 14 + FRAG_HDR_SIZE, ip_hdr_len);
+            frag2[14 + FRAG_HDR_SIZE + 10] = (uint8_t)(cksum >> 8);
+            frag2[14 + FRAG_HDR_SIZE + 11] = (uint8_t)(cksum & 0xFF);
+        } else {
+            uint16_t ipv6_paylen = (uint16_t)half2;
+            frag2[14 + FRAG_HDR_SIZE + 4] = (uint8_t)(ipv6_paylen >> 8);
+            frag2[14 + FRAG_HDR_SIZE + 5] = (uint8_t)(ipv6_paylen & 0xFF);
+        }
+
+        int enc_len = crypto_layer2_encrypt(ctx, frag2, off);
+        if (enc_len < 0) return -1;
+        *frag2_len = (uint32_t)enc_len;
+    }
+
+    return 0;
+}
+
+int frag_is_fragment_l2(const uint8_t *pkt_data, uint32_t pkt_len,
+                        uint16_t *pkt_id, uint8_t *frag_index) {
+    if (pkt_len < 14 + FRAG_HDR_SIZE + 20)
+        return 0;
+
+    uint8_t ver = pkt_data[14] >> 4;
+    if (ver == 4 || ver == 6)
+        return 0;
+
+    uint8_t inner_ver = pkt_data[14 + FRAG_HDR_SIZE] >> 4;
+    if (!(inner_ver == 4 || inner_ver == 6))
+        return 0;
+
+    frag_read_hdr(pkt_data + 14, pkt_id, frag_index);
+    return 1;
+}
+
+int frag_try_reassemble_l2(struct frag_table *ft,
+                           const uint8_t *pkt_data, uint32_t pkt_len,
+                           uint16_t pkt_id, uint8_t frag_index,
+                           uint8_t *out_buf, uint32_t *out_len) {
+    if (pkt_len < 14 + FRAG_HDR_SIZE + 20)
+        return -1;
+
+    const uint8_t *ip_hdr = pkt_data + 14 + FRAG_HDR_SIZE;
+    uint16_t ether_type = ((uint16_t)pkt_data[12] << 8) | pkt_data[13];
+
+    int ip_hdr_len;
+    if (ether_type == 0x0800) {
+        ip_hdr_len = (ip_hdr[0] & 0x0F) * 4;
+        if (ip_hdr_len < 20) return -1;
+    } else if (ether_type == 0x86DD) {
+        ip_hdr_len = 40;
+    } else {
+        return -1;
+    }
+
+    const uint8_t *payload = pkt_data + 14 + FRAG_HDR_SIZE + ip_hdr_len;
+    uint32_t payload_len = pkt_len - (14 + FRAG_HDR_SIZE + ip_hdr_len);
+
+    int idx = pkt_id % FRAG_TABLE_SIZE;
+    struct frag_entry *entry = &ft->entries[idx];
+    uint64_t now = get_time_ns();
+
+    if (frag_index == 0) {
+        entry->pkt_id = pkt_id;
+        entry->data_len = payload_len;
+        if (payload_len > sizeof(entry->data))
+            return -1;
+        memcpy(entry->data, payload, payload_len);
+        memcpy(entry->eth_hdr, pkt_data, 14);
+        memcpy(entry->ip_hdr, ip_hdr, ip_hdr_len);
+        entry->ip_hdr_len = ip_hdr_len;
+        entry->orig_proto = ip_hdr[9];
+        entry->timestamp_ns = now;
+        entry->valid = 1;
+        return 0;
+    }
+
+    if (frag_index == 1) {
+        if (!entry->valid || entry->pkt_id != pkt_id)
+            return -1;
+
+        if ((now - entry->timestamp_ns) > FRAG_TIMEOUT_NS) {
+            entry->valid = 0;
+            return -1;
+        }
+
+        uint32_t total_payload = entry->data_len + payload_len;
+        uint32_t total_pkt = 14 + entry->ip_hdr_len + total_payload;
+        if (total_pkt > 4096) {
+            entry->valid = 0;
+            return -1;
+        }
+
+        int off = 0;
+        memcpy(out_buf, entry->eth_hdr, 14);
+        off += 14;
+
+        memcpy(out_buf + off, entry->ip_hdr, entry->ip_hdr_len);
+        off += entry->ip_hdr_len;
+
+        memcpy(out_buf + off, entry->data, entry->data_len);
+        off += entry->data_len;
+
+        memcpy(out_buf + off, payload, payload_len);
+        off += payload_len;
+
+        if (ether_type == 0x0800) {
+            uint16_t ip_total = (uint16_t)(entry->ip_hdr_len + total_payload);
+            out_buf[14 + 2] = (uint8_t)(ip_total >> 8);
+            out_buf[14 + 3] = (uint8_t)(ip_total & 0xFF);
+
+            out_buf[14 + 10] = 0;
+            out_buf[14 + 11] = 0;
+            uint16_t cksum = crypto_calc_ip_checksum(out_buf + 14, entry->ip_hdr_len);
+            out_buf[14 + 10] = (uint8_t)(cksum >> 8);
+            out_buf[14 + 11] = (uint8_t)(cksum & 0xFF);
+        } else {
+            uint16_t ipv6_paylen = (uint16_t)total_payload;
+            out_buf[14 + 4] = (uint8_t)(ipv6_paylen >> 8);
+            out_buf[14 + 5] = (uint8_t)(ipv6_paylen & 0xFF);
+        }
+
+        *out_len = (uint32_t)off;
+        entry->valid = 0;
+        return 1;
+    }
+
+    return -1;
+}
+
 static void frag_write_hdr_l4(uint8_t *buf, uint16_t pkt_id, uint8_t frag_index) {
     buf[0] = (uint8_t)(pkt_id >> 8);
     buf[1] = (uint8_t)(pkt_id & 0xFF);

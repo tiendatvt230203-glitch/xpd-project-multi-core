@@ -37,21 +37,16 @@ int crypto_layer2_encrypt(struct packet_crypto_ctx *ctx, uint8_t *packet, size_t
 
     uint16_t ether_type = ((uint16_t)packet[12] << 8) | packet[13];
     uint8_t proto_flag;
-    uint16_t fake_etype;
 
     if (ether_type == 0x0800) {
         proto_flag = PROTO_FLAG_IPV4;
-        fake_etype = packet_crypto_get_fake_ethertype_ipv4();
     } 
     
     else if (ether_type == 0x86DD) {
         proto_flag = PROTO_FLAG_IPV6;
-        fake_etype = packet_crypto_get_fake_ethertype_ipv6();
     } 
     
     else return (int)pkt_len;
-
-    if (fake_etype == 0) return (int)pkt_len;
 
     uint32_t counter = packet_crypto_next_counter();
     uint8_t nonce[16];
@@ -67,7 +62,8 @@ int crypto_layer2_encrypt(struct packet_crypto_ctx *ctx, uint8_t *packet, size_t
         uint8_t tag[AES128_GCM_TAG_SIZE];
         if (crypto_aes_gcm_encrypt(key, nonce, nonce_len, packet + ETH_HEADER_SIZE, (int)payload_len, tag) != 0) return -1;
         memmove(packet + l2_enc_start, packet + ETH_HEADER_SIZE, payload_len);
-        crypto_write_counter(packet, nonce, nonce_size, (uint8_t)(fake_etype >> 8));
+        /* Use original EtherType high byte as marker (no configurable fake type) */
+        crypto_write_counter(packet, nonce, nonce_size, (uint8_t)(ether_type >> 8));
         memcpy(packet + l2_enc_start + payload_len, tag, AES128_GCM_TAG_SIZE);
         return (int)(pkt_len + l2_hdr_extra + AES128_GCM_TAG_SIZE);
     } 
@@ -77,7 +73,7 @@ int crypto_layer2_encrypt(struct packet_crypto_ctx *ctx, uint8_t *packet, size_t
         crypto_nonce_to_iv(nonce, nonce_size, iv);
         if (crypto_aes_ctr_with_key(key, iv, packet + ETH_HEADER_SIZE, (int)payload_len) != 0) return -1;
         memmove(packet + l2_enc_start, packet + ETH_HEADER_SIZE, payload_len);
-        crypto_write_counter(packet, nonce, nonce_size, (uint8_t)(fake_etype >> 8));
+        crypto_write_counter(packet, nonce, nonce_size, (uint8_t)(ether_type >> 8));
         return (int)(pkt_len + l2_hdr_extra);
     }
 }
@@ -90,12 +86,9 @@ int crypto_layer2_decrypt(struct packet_crypto_ctx *ctx, uint8_t *packet, size_t
 
     if (pkt_len < (size_t)l2_enc_start) return -1;
 
-    uint16_t fake_ipv4 = packet_crypto_get_fake_ethertype_ipv4();
-    uint16_t fake_ipv6 = packet_crypto_get_fake_ethertype_ipv6();
     uint8_t pkt_marker = packet[12];
-
-    if (!((fake_ipv4 && pkt_marker == (uint8_t)(fake_ipv4 >> 8)) ||
-          (fake_ipv6 && pkt_marker == (uint8_t)(fake_ipv6 >> 8)))) return (int)pkt_len;
+    /* Only handle packets where marker looks like IPv4/IPv6 high byte */
+    if (!(pkt_marker == 0x08 || pkt_marker == 0x86)) return (int)pkt_len;
 
     uint8_t proto_flag;
     uint8_t nonce[16];

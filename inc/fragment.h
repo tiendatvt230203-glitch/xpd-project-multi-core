@@ -51,6 +51,14 @@ static inline int frag_need_split_l4(uint32_t pkt_len) {
     return (pkt_len + overhead) > FRAG_MTU;
 }
 
+static inline int frag_need_split_l2(uint32_t pkt_len) {
+    int nonce_size = packet_crypto_get_nonce_size();
+    int overhead = (nonce_size - 1);
+    if (packet_crypto_get_mode() == 1)
+        overhead += 16;
+    return (pkt_len + overhead) > FRAG_MTU;
+}
+
 int frag_split_and_encrypt(struct packet_crypto_ctx *ctx,
                            const uint8_t *pkt_data, uint32_t pkt_len,
                            uint8_t *frag1, uint32_t *frag1_len,
@@ -81,6 +89,19 @@ int frag_decrypt_fragment_l4(struct packet_crypto_ctx *ctx,
                              uint16_t *out_pkt_id, uint8_t *out_frag_index);
 
 int frag_try_reassemble_l4(struct frag_table *ft,
+                           const uint8_t *pkt_data, uint32_t pkt_len,
+                           uint16_t pkt_id, uint8_t frag_index,
+                           uint8_t *out_buf, uint32_t *out_len);
+
+int frag_split_and_encrypt_l2(struct packet_crypto_ctx *ctx,
+                              const uint8_t *pkt_data, uint32_t pkt_len,
+                              uint8_t *frag1, uint32_t *frag1_len,
+                              uint8_t *frag2, uint32_t *frag2_len);
+
+int frag_is_fragment_l2(const uint8_t *pkt_data, uint32_t pkt_len,
+                        uint16_t *pkt_id, uint8_t *frag_index);
+
+int frag_try_reassemble_l2(struct frag_table *ft,
                            const uint8_t *pkt_data, uint32_t pkt_len,
                            uint16_t pkt_id, uint8_t frag_index,
                            uint8_t *out_buf, uint32_t *out_len);

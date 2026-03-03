@@ -162,7 +162,43 @@ static void *local_queue_thread(void *arg) {
             struct xsk_interface *wan = &fwd->wans[wan_idx];
             int tq = wan_tx_q[wan_idx];
 
-            if (crypto_enabled && crypto_layer == 3 &&
+            if (crypto_enabled && crypto_layer == 2 &&
+                frag_need_split_l2(pkt_lens[i])) {
+
+                uint8_t *pkt = (uint8_t *)pkt_ptrs[i];
+                memcpy(pkt, wan->dst_mac, 6);
+                memcpy(pkt + 6, wan->src_mac, 6);
+
+                uint32_t f1_len = 0, f2_len = 0;
+                if (frag_split_and_encrypt_l2(&crypto_ctx,
+                                              pkt, pkt_lens[i],
+                                              frag1_buf, &f1_len,
+                                              frag2_buf, &f2_len) != 0) {
+                    __sync_fetch_and_add(&fwd->total_dropped, 1);
+                    continue;
+                }
+
+                uint32_t wire_total = f1_len + f2_len;
+                if (wire_total > pkt_lens[i]) {
+                    flow_table_add_bytes(&g_flow_table,
+                                         src_ip, dst_ip, src_port, dst_port,
+                                         protocol, wire_total - pkt_lens[i]);
+                }
+
+                if (interface_send_batch_queue(wan, tq, frag1_buf, f1_len) == 0) {
+                    __sync_fetch_and_add(&fwd->local_to_wan, 1);
+                    wan_used[wan_idx] = 1;
+                } else {
+                    __sync_fetch_and_add(&fwd->total_dropped, 1);
+                }
+
+                if (interface_send_batch_queue(wan, tq, frag2_buf, f2_len) == 0) {
+                    __sync_fetch_and_add(&fwd->local_to_wan, 1);
+                } else {
+                    __sync_fetch_and_add(&fwd->total_dropped, 1);
+                }
+
+            } else if (crypto_enabled && crypto_layer == 3 &&
                 frag_need_split(pkt_lens[i])) {
 
                 uint8_t *pkt = (uint8_t *)pkt_ptrs[i];
@@ -312,21 +348,22 @@ static void *wan_queue_thread(void *arg) {
             uint8_t frag_index;
             int is_frag = 0;
 
-            if (crypto_enabled && crypto_layer == 3 && frag_tbl) {
-                is_frag = frag_is_fragment(pkt, pkt_len, &frag_pkt_id, &frag_index);
-            }
-            if (crypto_enabled && crypto_layer == 4 && frag_tbl) {
-                is_frag = frag_is_fragment_l4(pkt, pkt_len, &frag_pkt_id, &frag_index);
+            if (crypto_enabled && (crypto_layer == 3 || crypto_layer == 4) && frag_tbl) {
+                if (crypto_layer == 3) {
+                    is_frag = frag_is_fragment(pkt, pkt_len, &frag_pkt_id, &frag_index);
+                } else {
+                    is_frag = frag_is_fragment_l4(pkt, pkt_len, &frag_pkt_id, &frag_index);
+                }
             }
 
-            if (is_frag) {
+            if (is_frag && (crypto_layer == 3 || crypto_layer == 4)) {
                 int dec_len;
                 if (crypto_layer == 4) {
                     dec_len = frag_decrypt_fragment_l4(&crypto_ctx, pkt, pkt_len,
-                                                        &frag_pkt_id, &frag_index);
+                                                       &frag_pkt_id, &frag_index);
                 } else {
                     dec_len = frag_decrypt_fragment(&crypto_ctx, pkt, pkt_len,
-                                                     &frag_pkt_id, &frag_index);
+                                                    &frag_pkt_id, &frag_index);
                 }
                 if (dec_len < 0) {
                     __sync_fetch_and_add(&fwd->total_dropped, 1);
@@ -344,26 +381,39 @@ static void *wan_queue_thread(void *arg) {
                                           reassemble_buf, &reasm_len);
                 if (ret == 0) {
                     continue;
-                } 
-                
-                else if (ret == 1) {
+                } else if (ret == 1) {
                     final_pkt = reassemble_buf;
                     final_len = reasm_len;
-                } 
-                
-                else {
+                } else {
                     __sync_fetch_and_add(&fwd->total_dropped, 1);
                     continue;
                 }
-            } 
-            
-            else {
+            } else {
                 if (decrypt_packet(pkt, &pkt_len) != 0) {
                     __sync_fetch_and_add(&fwd->total_dropped, 1);
                     continue;
                 }
                 final_pkt = pkt;
                 final_len = pkt_len;
+
+                if (crypto_enabled && crypto_layer == 2 && frag_tbl) {
+                    if (frag_is_fragment_l2(final_pkt, final_len, &frag_pkt_id, &frag_index)) {
+                        uint32_t reasm_len = 0;
+                        int ret = frag_try_reassemble_l2(frag_tbl,
+                                                         final_pkt, final_len,
+                                                         frag_pkt_id, frag_index,
+                                                         reassemble_buf, &reasm_len);
+                        if (ret == 0) {
+                            continue;
+                        } else if (ret == 1) {
+                            final_pkt = reassemble_buf;
+                            final_len = reasm_len;
+                        } else {
+                            __sync_fetch_and_add(&fwd->total_dropped, 1);
+                            continue;
+                        }
+                    }
+                }
             }
 
             uint32_t dest_ip = get_dest_ip(final_pkt, final_len);
@@ -425,9 +475,7 @@ int forwarder_init(struct forwarder *fwd, struct app_config *cfg) {
         packet_crypto_set_encrypt_layer(cfg->encrypt_layer);
         packet_crypto_set_mode(cfg->crypto_mode);
         packet_crypto_set_nonce_size(cfg->nonce_size);
-        if (crypto_layer == 2) {
-            packet_crypto_set_ethertype(cfg->fake_ethertype_ipv4, cfg->fake_ethertype_ipv6);
-        } else if (crypto_layer == 3) {
+        if (crypto_layer == 3) {
             packet_crypto_set_fake_protocol(cfg->fake_protocol);
         } else if (crypto_layer == 4) {
             packet_crypto_set_fake_protocol(cfg->fake_protocol);
@@ -456,9 +504,7 @@ int forwarder_init(struct forwarder *fwd, struct app_config *cfg) {
     }
 
     for (int i = 0; i < cfg->wan_count; i++) {
-        uint16_t wan_fake4 = (crypto_enabled && crypto_layer == 2) ? cfg->fake_ethertype_ipv4 : 0;
-        uint16_t wan_fake6 = (crypto_enabled && crypto_layer == 2) ? cfg->fake_ethertype_ipv6 : 0;
-        if (interface_init_wan_rx(&fwd->wans[i], &cfg->wans[i], "bpf/xdp_wan_redirect.o", wan_fake4, wan_fake6) != 0) {
+        if (interface_init_wan_rx(&fwd->wans[i], &cfg->wans[i], "bpf/xdp_wan_redirect.o", 0, 0) != 0) {
             fprintf(stderr, "Failed to init WAN %s\n", cfg->wans[i].ifname);
             goto err_wans;
         }
@@ -503,7 +549,7 @@ void forwarder_run(struct forwarder *fwd) {
         total_wan_queues += fwd->wans[i].queue_count;
 
     struct frag_table *frag_tbls[MAX_INTERFACES] = {0};
-    if (crypto_enabled && (crypto_layer == 3 || crypto_layer == 4)) {
+    if (crypto_enabled && (crypto_layer == 2 || crypto_layer == 3 || crypto_layer == 4)) {
         for (int i = 0; i < fwd->wan_count; i++) {
             frag_tbls[i] = calloc(1, sizeof(struct frag_table));
             if (frag_tbls[i])
@@ -552,7 +598,46 @@ void forwarder_run(struct forwarder *fwd) {
                 struct xsk_interface *wan = &fwd->wans[wan_idx];
                 int tq = 0;
 
-                if (crypto_enabled && crypto_layer == 3 &&
+                if (crypto_enabled && crypto_layer == 2 &&
+                    frag_need_split_l2(pkt_lens[i])) {
+
+                    uint8_t frag1_buf[2048];
+                    uint8_t frag2_buf[2048];
+                    uint32_t f1_len = 0, f2_len = 0;
+
+                    uint8_t *pkt = (uint8_t *)pkt_ptrs[i];
+                    memcpy(pkt, wan->dst_mac, 6);
+                    memcpy(pkt + 6, wan->src_mac, 6);
+
+                    if (frag_split_and_encrypt_l2(&crypto_ctx,
+                                                  pkt, pkt_lens[i],
+                                                  frag1_buf, &f1_len,
+                                                  frag2_buf, &f2_len) != 0) {
+                        __sync_fetch_and_add(&fwd->total_dropped, 1);
+                        continue;
+                    }
+
+                    uint32_t wire_total = f1_len + f2_len;
+                    if (wire_total > pkt_lens[i]) {
+                        flow_table_add_bytes(&g_flow_table,
+                                             src_ip, dst_ip, src_port, dst_port,
+                                             protocol, wire_total - pkt_lens[i]);
+                    }
+
+                    if (interface_send_batch_queue(wan, tq, frag1_buf, f1_len) == 0) {
+                        __sync_fetch_and_add(&fwd->local_to_wan, 1);
+                        wan_used[wan_idx] = 1;
+                    } else {
+                        __sync_fetch_and_add(&fwd->total_dropped, 1);
+                    }
+
+                    if (interface_send_batch_queue(wan, tq, frag2_buf, f2_len) == 0) {
+                        __sync_fetch_and_add(&fwd->local_to_wan, 1);
+                    } else {
+                        __sync_fetch_and_add(&fwd->total_dropped, 1);
+                    }
+
+                } else if (crypto_enabled && crypto_layer == 3 &&
                     frag_need_split(pkt_lens[i])) {
 
                     uint8_t frag1_buf[2048];
@@ -660,7 +745,7 @@ void forwarder_run(struct forwarder *fwd) {
                 continue;
 
             int local_used[MAX_INTERFACES] = {0};
-            struct frag_table *frag_tbl = (crypto_enabled && (crypto_layer == 3 || crypto_layer == 4)) ? frag_tbls[wi] : NULL;
+            struct frag_table *frag_tbl = (crypto_enabled && (crypto_layer == 2 || crypto_layer == 3 || crypto_layer == 4)) ? frag_tbls[wi] : NULL;
             uint8_t reassemble_buf[4096];
 
             for (int i = 0; i < rcvd; i++) {

@@ -10,8 +10,6 @@
 #include <openssl/rand.h>
 #include <stdatomic.h>
 
-static uint16_t g_fake_ethertype_ipv4 = 0;
-static uint16_t g_fake_ethertype_ipv6 = 0;
 static uint8_t g_fake_protocol = 99;
 static int g_encrypt_layer = 0;
 static int g_crypto_mode = 0;
@@ -36,17 +34,6 @@ static EVP_CIPHER_CTX *get_gcm_ctx(void) {
     }
     return tls_gcm_ctx;
 }
-
-void packet_crypto_set_ethertype(uint16_t fake_ipv4, uint16_t fake_ipv6) {
-    g_fake_ethertype_ipv4 = fake_ipv4;
-    g_fake_ethertype_ipv6 = fake_ipv6;
-}
-
-uint16_t packet_crypto_get_fake_ethertype_ipv4(void) { return g_fake_ethertype_ipv4; }
-uint16_t packet_crypto_get_fake_ethertype_ipv6(void) { return g_fake_ethertype_ipv6; }
-
-void packet_crypto_set_fake_protocol(uint8_t proto) { g_fake_protocol = proto; }
-uint8_t packet_crypto_get_fake_protocol(void) { return g_fake_protocol; }
 
 int packet_crypto_get_tunnel_hdr_size(void) {
     return g_nonce_size + 1;
@@ -376,3 +363,6 @@ int packet_decrypt(struct packet_crypto_ctx *ctx,
         return -1;
     }
 }
+
+void packet_crypto_set_fake_protocol(uint8_t proto) { g_fake_protocol = proto; }
+uint8_t packet_crypto_get_fake_protocol(void) { return g_fake_protocol; }

@@ -48,28 +48,6 @@ static int load_global_row(struct app_config *cfg, PGresult *res,
         return -1;
     }
 
-    v = PQgetvalue(res, 0, PQfnumber(res, "fake_ethertype_ipv4"));
-    if (v && v[0] != '\0') {
-        unsigned int val = 0;
-        if (sscanf(v, "%x", &val) == 1 && val <= 0xFFFF && val != 0) {
-            cfg->fake_ethertype_ipv4 = (uint16_t)val;
-        } else {
-            fprintf(stderr, "[DB CRYPTO] Invalid fake_ethertype_ipv4: %s\n", v);
-            return -1;
-        }
-    }
-
-    v = PQgetvalue(res, 0, PQfnumber(res, "fake_ethertype_ipv6"));
-    if (v && v[0] != '\0') {
-        unsigned int val = 0;
-        if (sscanf(v, "%x", &val) == 1 && val <= 0xFFFF && val != 0) {
-            cfg->fake_ethertype_ipv6 = (uint16_t)val;
-        } else {
-            fprintf(stderr, "[DB CRYPTO] Invalid fake_ethertype_ipv6: %s\n", v);
-            return -1;
-        }
-    }
-
     v = PQgetvalue(res, 0, PQfnumber(res, "crypto_key"));
     if (v && v[0] != '\0') {
         strncpy(crypto_key_hex, v, key_hex_len - 1);
@@ -219,8 +197,7 @@ int config_load_from_db(struct app_config *cfg, int config_id, const char *conn_
         const char *params[1] = { id_str };
         PGresult *res = PQexecParams(conn,
             "SELECT crypto_enabled, crypto_key, encrypt_layer, "
-            "       fake_protocol, crypto_mode, aes_bits, nonce_size, "
-            "       fake_ethertype_ipv4, fake_ethertype_ipv6 "
+            "       fake_protocol, crypto_mode, aes_bits, nonce_size "
             "FROM xdp_configs WHERE id = $1",
             1, NULL, params, NULL, NULL, 0);
 
@@ -306,17 +283,7 @@ int config_load_from_db(struct app_config *cfg, int config_id, const char *conn_
                     cfg->encrypt_layer);
             return -1;
         }
-        if (cfg->encrypt_layer == 2) {
-            if (cfg->fake_ethertype_ipv4 == 0 && cfg->fake_ethertype_ipv6 == 0) {
-                fprintf(stderr, "[DB CRYPTO] Layer 2: at least one fake_ethertype required\n");
-                return -1;
-            }
-            if (cfg->fake_ethertype_ipv4 != 0 && cfg->fake_ethertype_ipv6 != 0 &&
-                cfg->fake_ethertype_ipv4 == cfg->fake_ethertype_ipv6) {
-                fprintf(stderr, "[DB CRYPTO] Layer 2: fake_ethertype_ipv4 and fake_ethertype_ipv6 must differ\n");
-                return -1;
-            }
-        } else if (cfg->encrypt_layer == 3 || cfg->encrypt_layer == 4) {
+        if (cfg->encrypt_layer == 3 || cfg->encrypt_layer == 4) {
             if (cfg->fake_protocol == 0)
                 cfg->fake_protocol = 99;
         }
