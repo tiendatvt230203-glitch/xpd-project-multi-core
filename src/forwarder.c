@@ -5,6 +5,7 @@
 #include <signal.h>
 #include <poll.h>
 #include <pthread.h>
+#include <sched.h>
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
 #include <netinet/udp.h>
@@ -23,7 +24,18 @@ struct queue_thread_args {
     int iface_idx;
     int queue_idx;
     int tx_queue_base;
+    int core_id;        /* CPU core to pin this thread to (only used for no-crypto profile) */
 };
+
+static void pin_thread_to_core(int core_id) {
+    if (core_id < 0)
+        return;
+
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(core_id, &cpuset);
+    (void)pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
+}
 
 static int encrypt_packet(void *pkt_data, uint32_t *pkt_len) {
     if (!crypto_enabled) return 0;
@@ -117,6 +129,7 @@ static void *gc_thread(void *arg) {
 static void *local_queue_thread(void *arg) {
     struct queue_thread_args *args = (struct queue_thread_args *)arg;
     struct forwarder *fwd = args->fwd;
+    pin_thread_to_core(args->core_id);
     int local_idx = args->iface_idx;
     int queue_idx = args->queue_idx;
     int tx_base = args->tx_queue_base;
@@ -301,12 +314,14 @@ static void *local_queue_thread(void *arg) {
         interface_recv_release_single_queue(local, queue_idx, addrs, rcvd);
     }
 
+    free(args);
     return NULL;
 }
 
 static void *wan_queue_thread(void *arg) {
     struct queue_thread_args *args = (struct queue_thread_args *)arg;
     struct forwarder *fwd = args->fwd;
+    pin_thread_to_core(args->core_id);
     int wan_idx = args->iface_idx;
     int queue_idx = args->queue_idx;
     int tx_base = args->tx_queue_base;
@@ -461,6 +476,7 @@ static void *wan_queue_thread(void *arg) {
     }
 
     if (frag_tbl) free(frag_tbl);
+    free(args);
     return NULL;
 }
 
@@ -544,6 +560,65 @@ void forwarder_run(struct forwarder *fwd) {
     signal(SIGINT, sigint_handler);
     signal(SIGTERM, sigint_handler);
 
+    /* No-crypto profile: run multi-threaded across 5 dedicated cores (0,2,4,6,8).
+     * Crypto profiles keep the existing single-threaded loop below. */
+    if (!crypto_enabled) {
+        const int allowed_cores[] = {0, 2, 4, 6, 8};
+        const int num_allowed_cores = (int)(sizeof(allowed_cores) / sizeof(allowed_cores[0]));
+
+        pthread_t gc_thr;
+        pthread_t workers[MAX_INTERFACES * 8]; /* enough for queues on both sides */
+        int worker_count = 0;
+
+        /* Start flow-table GC in its own thread (unpinned, or OS will place it). */
+        (void)pthread_create(&gc_thr, NULL, gc_thread, NULL);
+
+        /* LOCAL -> WAN workers: one per LOCAL queue. */
+        for (int li = 0; li < fwd->local_count; li++) {
+            for (int q = 0; q < fwd->locals[li].queue_count; q++) {
+                struct queue_thread_args *args = calloc(1, sizeof(*args));
+                if (!args) continue;
+                args->fwd = fwd;
+                args->iface_idx = li;
+                args->queue_idx = q;
+                args->tx_queue_base = q;
+                args->core_id = allowed_cores[worker_count % num_allowed_cores];
+                if (pthread_create(&workers[worker_count], NULL, local_queue_thread, args) == 0) {
+                    worker_count++;
+                } else {
+                    free(args);
+                }
+            }
+        }
+
+        /* WAN -> LOCAL workers: one per WAN queue. */
+        for (int wi = 0; wi < fwd->wan_count; wi++) {
+            for (int q = 0; q < fwd->wans[wi].queue_count; q++) {
+                struct queue_thread_args *args = calloc(1, sizeof(*args));
+                if (!args) continue;
+                args->fwd = fwd;
+                args->iface_idx = wi;
+                args->queue_idx = q;
+                args->tx_queue_base = q;
+                args->core_id = allowed_cores[worker_count % num_allowed_cores];
+                if (pthread_create(&workers[worker_count], NULL, wan_queue_thread, args) == 0) {
+                    worker_count++;
+                } else {
+                    free(args);
+                }
+            }
+        }
+
+        /* Wait for workers to finish (until signal sets running=0 and threads exit). */
+        for (int i = 0; i < worker_count; i++) {
+            pthread_join(workers[i], NULL);
+        }
+        running = 0;
+        pthread_join(gc_thr, NULL);
+        return;
+    }
+
+    /* Crypto-enabled: keep existing single-threaded loop and fragmentation handling. */
     int total_local_queues = 0;
     for (int i = 0; i < fwd->local_count; i++)
         total_local_queues += fwd->locals[i].queue_count;
