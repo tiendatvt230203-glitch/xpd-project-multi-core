@@ -318,9 +318,13 @@ static void *wan_queue_thread(void *arg) {
     uint32_t pkt_lens[MAX_BATCH_SIZE];
     uint64_t addrs[MAX_BATCH_SIZE];
 
-    struct frag_table *frag_tbl = calloc(1, sizeof(struct frag_table));
-    if (frag_tbl) {
-        frag_table_init(frag_tbl);
+    /* Only allocate frag table when crypto is enabled (L2/L3/L4 reassembly). No-crypto option does per-packet WAN only, no crypto. */
+    struct frag_table *frag_tbl = NULL;
+    if (crypto_enabled && (crypto_layer == 2 || crypto_layer == 3 || crypto_layer == 4)) {
+        frag_tbl = calloc(1, sizeof(struct frag_table));
+        if (frag_tbl) {
+            frag_table_init(frag_tbl);
+        }
     }
 
     uint8_t reassemble_buf[4096];
