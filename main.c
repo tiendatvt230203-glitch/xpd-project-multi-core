@@ -130,12 +130,13 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    if (pin_to_cpu_core(cpu_core) != 0) {
-        fprintf(stderr, "Error: Failed to pin to CPU core %d\n", cpu_core);
-        return 1;
-    }
-    printf("[DAEMON] Pinned to CPU core %d\n", cpu_core);
-    fflush(stdout);
+    /* NOTE:
+     * Previously we pinned the entire process to a single CPU core here.
+     * That prevented the per-thread affinity in the forwarder from using
+     * multiple cores for packet processing. We now rely on per-thread
+     * pinning in the forwarder and allow the OS to schedule this daemon
+     * across all available cores.
+     */
 
     libbpf_set_print(libbpf_print_silent);
 
