@@ -502,6 +502,21 @@ int forwarder_init(struct forwarder *fwd, struct app_config *cfg) {
         }
     }
 
+    /* For the no-crypto option we want to fully utilize multiple cores/queues.
+     * If the DB config did not explicitly set queue_count, bump it up to 4
+     * (bounded by NIC capabilities) so that LOCAL and WAN each have 4 queues
+     * and the multi-threaded no-crypto path can spread load across cores. */
+    if (!crypto_enabled) {
+        for (int i = 0; i < cfg->local_count; i++) {
+            if (cfg->locals[i].queue_count < 4)
+                cfg->locals[i].queue_count = 4;
+        }
+        for (int i = 0; i < cfg->wan_count; i++) {
+            if (cfg->wans[i].queue_count < 4)
+                cfg->wans[i].queue_count = 4;
+        }
+    }
+
     uint32_t window_size = cfg->wans[0].window_size;
     flow_table_init(&g_flow_table, window_size, cfg->wan_count);
 
