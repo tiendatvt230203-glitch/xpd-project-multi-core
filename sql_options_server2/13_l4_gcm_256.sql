@@ -21,7 +21,7 @@ INSERT INTO xdp_local_configs (
     src_mac,
     dst_mac
 ) VALUES
-(13, 'enp7s0', '192.168.9.0/24', '20:7c:14:f8:0d:08', '20:7c:14:f8:0c:d2');
+(13, 'enp7s0', '192.168.182.0/24', '20:7c:14:f8:0d:50', '20:7c:14:f8:0c:f6');
 
 INSERT INTO xdp_wan_configs (
     config_id,
