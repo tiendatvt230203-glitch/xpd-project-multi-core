@@ -130,14 +130,6 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    /* NOTE:
-     * Previously we pinned the entire process to a single CPU core here.
-     * That prevented the per-thread affinity in the forwarder from using
-     * multiple cores for packet processing. We now rely on per-thread
-     * pinning in the forwarder and allow the OS to schedule this daemon
-     * across all available cores.
-     */
-
     libbpf_set_print(libbpf_print_silent);
 
     printf("[DAEMON] Connecting to PostgreSQL...\n");
@@ -194,6 +186,9 @@ int main(int argc, char **argv) {
         fflush(stdout);
 
         forwarder_run(&fwd);
+
+        forwarder_print_stats(&fwd);
+
         forwarder_cleanup(&fwd);
 
         printf("[DAEMON] Forwarder stopped. Waiting for next notification...\n\n");

@@ -4,8 +4,8 @@
 #include <stdint.h>
 #include <pthread.h>
 
-#define FLOW_TABLE_SIZE 1048576
-#define FLOW_TIMEOUT_SEC 120
+#define FLOW_TABLE_SIZE 16384
+#define FLOW_TIMEOUT_SEC 60
 
 struct flow_key {
     uint32_t src_ip;

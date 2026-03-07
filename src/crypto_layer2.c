@@ -5,8 +5,7 @@
 
 #define MIN_ETH_PKT  (ETH_HEADER_SIZE + 8)
 
-/* Wire format: [dst_mac 6][src_mac 6][0x88 0xb5][nonce at 14][ciphertext][GCM tag if GCM].
- * Ethernet header stays valid; payload is nonce + ciphertext, not fake IP. */
+
 
 static int verify_ipv4_after_decrypt(const uint8_t *ip_payload, size_t len) {
     if (len < 20) return 0;
@@ -36,7 +35,7 @@ int crypto_layer2_encrypt(struct packet_crypto_ctx *ctx, uint8_t *packet, size_t
 
     int nonce_size = packet_crypto_get_nonce_size();
     int is_gcm = (packet_crypto_get_mode() == CRYPTO_MODE_GCM);
-    size_t payload_len = pkt_len - ETH_HEADER_SIZE;  /* EtherType(2) + IP + ... */
+    size_t payload_len = pkt_len - ETH_HEADER_SIZE;
 
     uint16_t ether_type = ((uint16_t)packet[12] << 8) | packet[13];
     uint8_t proto_flag;
@@ -53,7 +52,7 @@ int crypto_layer2_encrypt(struct packet_crypto_ctx *ctx, uint8_t *packet, size_t
     int nonce_len;
     crypto_generate_nonce(counter, proto_flag, nonce, &nonce_len);
 
-    /* Make room: [14..pkt_len-1] -> [14+nonce_size..] */
+
     memmove(packet + ETH_HEADER_SIZE + nonce_size, packet + ETH_HEADER_SIZE, payload_len);
     memcpy(packet + ETH_HEADER_SIZE, nonce, nonce_size);
     packet[12] = (uint8_t)(ETHERTYPE_L2_ENCRYPTED >> 8);
@@ -113,7 +112,7 @@ int crypto_layer2_decrypt(struct packet_crypto_ctx *ctx, uint8_t *packet, size_t
 
         if (is_gcm) {
             if (crypto_aes_gcm_decrypt(key, nonce, nonce_len, work_ptr, (int)enc_len, tag) == 0) {
-                /* Plaintext is [ether_high, ether_low, IP...]; restore EtherType and payload */
+   
                 packet[12] = work_ptr[0];
                 packet[13] = work_ptr[1];
                 memmove(packet + ETH_HEADER_SIZE, work_ptr + 2, enc_len - 2);

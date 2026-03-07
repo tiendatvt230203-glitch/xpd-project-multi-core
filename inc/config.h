@@ -15,11 +15,13 @@
 
 #define DEFAULT_FRAME_SIZE      4096
 #define DEFAULT_BATCH_SIZE      1024
-#define DEFAULT_UMEM_MB_LOCAL   512
+#define DEFAULT_UMEM_MB_LOCAL   2048
 #define DEFAULT_UMEM_MB_WAN     256
-#define DEFAULT_RING_SIZE       8192
+#define DEFAULT_RING_SIZE       262144
+#define DEFAULT_RING_SIZE_WAN   32768
 #define DEFAULT_WINDOW_KB       2048
 #define DEFAULT_QUEUE_COUNT     1
+#define DEFAULT_LOCAL_RATE_LIMIT_MBPS 0
 
 struct local_config {
     char ifname[IF_NAMESIZE];
@@ -63,6 +65,7 @@ struct app_config {
     uint8_t crypto_key[AES_KEY_LEN];
     int encrypt_layer;
     uint8_t fake_protocol;
+    uint32_t local_rate_limit_mbps;
     int crypto_mode;
     int nonce_size;
     int aes_bits;

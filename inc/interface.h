@@ -17,6 +17,7 @@ struct xsk_queue {
     uint64_t tx_slot;
     int pending_tx_count;           
     pthread_mutex_t tx_lock;
+    uint64_t tx_wait_loops;
 };
 
 struct xsk_interface {

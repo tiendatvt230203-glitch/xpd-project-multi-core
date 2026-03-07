@@ -1,5 +1,6 @@
 #include "../inc/interface.h"
 #include <poll.h>
+#include <sched.h>
 #include <net/ethernet.h>
 #include <unistd.h>
 #include <errno.h>
@@ -881,11 +882,11 @@ int interface_send_to_local_batch(struct xsk_interface *iface,
         if (completed > 0)
             xsk_ring_cons__release(&queue->comp, completed);
 
-        for (int retry = 0; retry < 3; retry++) {
+        for (int retry = 0; retry < 8; retry++) {
             reserved = xsk_ring_prod__reserve(&queue->tx, 1, &idx);
             if (reserved >= 1)
                 break;
-            for (volatile int i = 0; i < 100; i++);
+            for (volatile int i = 0; i < 400; i++);
             completed = xsk_ring_cons__peek(&queue->comp, iface->ring_size, &comp_idx);
             if (completed > 0)
                 xsk_ring_cons__release(&queue->comp, completed);
@@ -914,7 +915,7 @@ int interface_send_to_local_batch(struct xsk_interface *iface,
     __sync_fetch_and_add(&iface->tx_packets, 1);
     __sync_fetch_and_add(&iface->tx_bytes, pkt_len);
 
-    if (queue->pending_tx_count >= 64) {
+    if (queue->pending_tx_count >= 16) {
         sendto(xsk_socket__fd(queue->xsk), NULL, 0, MSG_DONTWAIT, NULL, 0);
         queue->pending_tx_count = 0;
     }
@@ -1026,11 +1027,11 @@ int interface_send_batch_queue(struct xsk_interface *iface, int queue_idx,
         if (completed > 0)
             xsk_ring_cons__release(&queue->comp, completed);
 
-        for (int retry = 0; retry < 3; retry++) {
+        for (int retry = 0; retry < 8; retry++) {
             reserved = xsk_ring_prod__reserve(&queue->tx, 1, &idx);
             if (reserved >= 1)
                 break;
-            for (volatile int i = 0; i < 100; i++);
+            for (volatile int i = 0; i < 400; i++);
             completed = xsk_ring_cons__peek(&queue->comp, iface->ring_size, &comp_idx);
             if (completed > 0)
                 xsk_ring_cons__release(&queue->comp, completed);
@@ -1063,7 +1064,7 @@ int interface_send_batch_queue(struct xsk_interface *iface, int queue_idx,
     __sync_fetch_and_add(&iface->tx_packets, 1);
     __sync_fetch_and_add(&iface->tx_bytes, pkt_len);
 
-    if (queue->pending_tx_count >= 64) {
+    if (queue->pending_tx_count >= 16) {
         sendto(xsk_socket__fd(queue->xsk), NULL, 0, MSG_DONTWAIT, NULL, 0);
         queue->pending_tx_count = 0;
     }
@@ -1101,35 +1102,27 @@ int interface_send_to_local_batch_queue(struct xsk_interface *iface,
     pthread_mutex_lock(&queue->tx_lock);
 
     uint32_t comp_idx;
-    int completed = xsk_ring_cons__peek(&queue->comp, iface->ring_size, &comp_idx);
-    if (completed > 0)
-        xsk_ring_cons__release(&queue->comp, completed);
+    int completed;
+    int reserved = 0;
+    unsigned int wait_loops = 0;
 
-    int reserved = xsk_ring_prod__reserve(&queue->tx, 1, &idx);
-    if (reserved < 1) {
-        if (queue->pending_tx_count > 0) {
-            sendto(xsk_socket__fd(queue->xsk), NULL, 0, MSG_DONTWAIT, NULL, 0);
-            queue->pending_tx_count = 0;
-        }
-
+    while (1) {
         completed = xsk_ring_cons__peek(&queue->comp, iface->ring_size, &comp_idx);
         if (completed > 0)
             xsk_ring_cons__release(&queue->comp, completed);
 
-        for (int retry = 0; retry < 3; retry++) {
-            reserved = xsk_ring_prod__reserve(&queue->tx, 1, &idx);
-            if (reserved >= 1)
-                break;
-            for (volatile int i = 0; i < 100; i++);
-            completed = xsk_ring_cons__peek(&queue->comp, iface->ring_size, &comp_idx);
-            if (completed > 0)
-                xsk_ring_cons__release(&queue->comp, completed);
-        }
+        reserved = xsk_ring_prod__reserve(&queue->tx, 1, &idx);
+        if (reserved >= 1)
+            break;
 
-        if (reserved < 1) {
-            ret = -1;
-            goto unlock;
+        __sync_fetch_and_add(&queue->tx_wait_loops, 1);
+        sendto(xsk_socket__fd(queue->xsk), NULL, 0, MSG_DONTWAIT, NULL, 0);
+        queue->pending_tx_count = 0;
+        if (wait_loops++ > 50) {
+            usleep(100);
+            wait_loops = 0;
         }
+        sched_yield();
     }
 
     {
@@ -1153,14 +1146,14 @@ int interface_send_to_local_batch_queue(struct xsk_interface *iface,
     __sync_fetch_and_add(&iface->tx_packets, 1);
     __sync_fetch_and_add(&iface->tx_bytes, pkt_len);
 
-    if (queue->pending_tx_count >= 64) {
+    if (queue->pending_tx_count >= 4) {
         sendto(xsk_socket__fd(queue->xsk), NULL, 0, MSG_DONTWAIT, NULL, 0);
         queue->pending_tx_count = 0;
     }
 
 unlock:
     pthread_mutex_unlock(&queue->tx_lock);
-    return ret;
+    return 0;
 }
 
 void interface_send_to_local_flush_queue(struct xsk_interface *iface,

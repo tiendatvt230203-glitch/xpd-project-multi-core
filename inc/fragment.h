@@ -37,7 +37,6 @@ void frag_table_init(struct frag_table *ft);
 
 void frag_table_gc(struct frag_table *ft);
 
-/* Before encryption: if (plaintext_len + encryption_overhead) > MTU then we must split; otherwise encrypt whole packet. */
 static inline int frag_need_split(uint32_t pkt_len) {
     int overhead = packet_crypto_get_tunnel_hdr_size() + FRAG_HDR_SIZE;
     if (packet_crypto_get_mode() == 1)
@@ -54,7 +53,7 @@ static inline int frag_need_split_l4(uint32_t pkt_len) {
 
 static inline int frag_need_split_l2(uint32_t pkt_len) {
     int nonce_size = packet_crypto_get_nonce_size();
-    int overhead = nonce_size;  /* EtherType 0x88b5 leaves payload at 14; nonce at 14, then ciphertext */
+    int overhead = nonce_size;
     if (packet_crypto_get_mode() == 1)
         overhead += 16;
     return (pkt_len + overhead) > FRAG_MTU;

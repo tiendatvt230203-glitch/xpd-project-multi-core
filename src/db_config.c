@@ -54,6 +54,7 @@ static int load_global_row(struct app_config *cfg, PGresult *res,
         crypto_key_hex[key_hex_len - 1] = '\0';
     }
 
+    cfg->local_rate_limit_mbps = DEFAULT_LOCAL_RATE_LIMIT_MBPS;
     return 0;
 }
 
@@ -137,7 +138,7 @@ static int load_wan_rows(struct app_config *cfg, PGresult *res)
         wan->batch_size   = cfg->global_batch_size;
         wan->window_size  = (uint32_t)(DEFAULT_WINDOW_KB * 1024);
         wan->umem_mb      = DEFAULT_UMEM_MB_WAN;
-        wan->ring_size    = DEFAULT_RING_SIZE;
+        wan->ring_size    = DEFAULT_RING_SIZE_WAN;
         wan->queue_count  = DEFAULT_QUEUE_COUNT;
 
         const char *v;
@@ -283,7 +284,7 @@ int config_load_from_db(struct app_config *cfg, int config_id, const char *conn_
                     cfg->encrypt_layer);
             return -1;
         }
-        if (cfg->encrypt_layer == 3 || cfg->encrypt_layer == 4) {
+        if (cfg->encrypt_layer == 2 || cfg->encrypt_layer == 3) {
             if (cfg->fake_protocol == 0)
                 cfg->fake_protocol = 99;
         }

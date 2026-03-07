@@ -49,13 +49,15 @@ void flow_table_cleanup(struct flow_table *ft) {
 }
 
 static int next_wan = 0;
-static pthread_mutex_t next_wan_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static int get_next_wan(int wan_count) {
-    pthread_mutex_lock(&next_wan_lock);
-    int wan = next_wan;
-    next_wan = (next_wan + 1) % wan_count;
-    pthread_mutex_unlock(&next_wan_lock);
+    if (wan_count <= 0)
+        return 0;
+
+    int wan = __sync_fetch_and_add(&next_wan, 1);
+    if (wan < 0)
+        wan = -wan;
+    wan %= wan_count;
     return wan;
 }
 

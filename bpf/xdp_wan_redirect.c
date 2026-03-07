@@ -30,9 +30,6 @@ struct {
 #define STAT_REDIRECT   2
 #define STAT_NO_SOCK    3
 
-/* L2-encrypted payload (user space decrypts); must redirect so forwarder can receive */
-#define ETH_P_L2_ENCRYPTED  0x88b5
-
 static __always_inline void inc_stat(int idx)
 {
     __u64 *val = bpf_map_lookup_elem(&wan_stats_map, &idx);
@@ -60,7 +57,7 @@ int xdp_wan_redirect_prog(struct xdp_md *ctx)
     if (proto == __constant_htons(ETH_P_IPV6))
         goto redirect;
 
-    if (proto == __constant_htons(ETH_P_L2_ENCRYPTED))
+    if (proto == __constant_htons(0x88b5))
         goto redirect;
 
     int key0 = 0, key1 = 1;

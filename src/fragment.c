@@ -538,7 +538,6 @@ int frag_split_and_encrypt_l2(struct packet_crypto_ctx *ctx,
     uint32_t half1 = payload_len / 2;
     uint32_t half2 = payload_len - half1;
 
-    /* fragment 0 */
     {
         uint32_t off = 0;
         memcpy(frag1, eth_hdr, 14);
@@ -575,7 +574,6 @@ int frag_split_and_encrypt_l2(struct packet_crypto_ctx *ctx,
         *frag1_len = (uint32_t)enc_len;
     }
 
-    /* fragment 1 */
     {
         uint32_t off = 0;
         memcpy(frag2, eth_hdr, 14);
